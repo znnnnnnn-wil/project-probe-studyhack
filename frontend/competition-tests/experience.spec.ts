@@ -103,6 +103,25 @@ test("自己的项目免费练五轮，无订单，刷新后题目与草稿对�
   expect(
     (await (await page.request.get("/api/shop")).json()).orders,
   ).toHaveLength(0);
+  const retest = page.getByRole("region", { name: "专项复测" });
+  await retest.getByLabel("选择复测反馈").selectOption("1");
+  const revised = "测试输入：两次并发预约。预期结果：只有一笔有效预约。";
+  await retest.getByLabel("补答").fill(revised);
+  await retest.getByRole("button", { name: "提交补答并对照" }).click();
+  await expect(retest.getByText(/新增了标注：测试输入、预期结果/)).toBeVisible();
+  await page.reload();
+  await expect(retest.getByText(revised, { exact: true })).toBeVisible();
+
+  await page.goto("/#/history");
+  const record = page.getByRole("region", { name: "免费项目训练" });
+  await expect(record.getByText(/专项复测已完成/)).toBeVisible();
+  await record.getByRole("link", { name: /我的合成训练项目/ }).click();
+  await expect(retest.getByText("前后对照", { exact: true })).toBeVisible();
+  const finalExport = page.waitForEvent("download");
+  await trial.getByRole("button", { name: "导出本轮复盘" }).click();
+  const finalContent = await readFile((await (await finalExport).path())!, "utf8");
+  expect(finalContent).toContain("## 专项复测");
+  expect(finalContent).toContain(revised);
 });
 
 test("手机端可选择 RAG 场景，回看旧回答不会覆盖当前草稿", async ({ page }) => {

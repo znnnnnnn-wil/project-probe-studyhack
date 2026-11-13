@@ -19,6 +19,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 @SpringBootTest(
   properties = {
+    "app.origin=http://localhost:5173",
     "spring.datasource.url=${PROBE_TEST_DB_URL:jdbc:h2:mem:tests;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}",
     "spring.datasource.username=${PROBE_TEST_DB_USER:sa}",
     "spring.datasource.password=${PROBE_TEST_DB_PASSWORD:}",

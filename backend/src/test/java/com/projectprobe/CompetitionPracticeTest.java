@@ -14,6 +14,7 @@ class CompetitionPracticeTest {
   @Autowired Store s;
   @Autowired ProjectService projects;
   @Autowired ProjectPractice practice;
+  @Autowired PracticeRetest retest;
   String[] fixture() {
     String user = id();
     s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
@@ -40,6 +41,26 @@ class CompetitionPracticeTest {
     var report = (Map<String,Object>)state.get("report");
     assertEquals(5, list(report, "findings").size());
     assertEquals(state, practice.run(f[0], f[1], Map.of()));
+    var turns = list(state, "turns");
+    var invalid = Map.<String, Object>of(
+      "findingIndex", 0, "turnId", turns.get(1).get("id"), "answer", "来自另一题");
+    assertThrows(ResponseStatusException.class, () -> retest.run(f[0], f[1], invalid));
+
+    var input = Map.<String, Object>of(
+      "findingIndex", 0, "turnId", turns.get(0).get("id"),
+      "answer", "测试输入：两次并发请求。预期结果：仅成功一笔。实测结果：尚未执行。");
+    var compared = retest.run(f[0], f[1], input);
+    var saved = PracticeRetest.object(compared.get("retest"));
+    var comparison = list(PracticeRetest.object(saved.get("report")), "comparisons").get(0);
+    assertEquals("COMPLETED", saved.get("status"));
+    assertEquals(report, compared.get("report"));
+    assertEquals(turns.get(0).get("answer"), list(comparison, "previousEvidence").get(0).get("quote"));
+    assertEquals(input.get("answer"), list(comparison, "currentEvidence").get(0).get("quote"));
+    assertTrue(str(comparison, "assessment").contains("测试输入、预期结果"));
+    assertFalse(str(comparison, "assessment").contains("、实测结果"));
+    assertEquals(compared, retest.run(f[0], f[1], input));
+    assertEquals(true, practice.history(f[0]).get(0).get("retestCompleted"));
+    assertTrue(practice.history(id()).isEmpty());
     assertEquals(0, s.db.queryForObject("SELECT COUNT(*) FROM purchase_orders WHERE user_id=?", Integer.class, f[0]));
     assertEquals(0, s.db.queryForObject("SELECT COUNT(*) FROM training_packages WHERE user_id=?", Integer.class, f[0]));
     assertThrows(ResponseStatusException.class, () -> practice.get(id(), f[1]));
@@ -55,6 +76,8 @@ class CompetitionPracticeTest {
     assertEquals(2, list(recovered, "turns").size());
     assertEquals("已经提交的回答，故障后应保留。", list(recovered, "turns").get(0).get("answer"));
     assertEquals(recovered, practice.run(f[0], f[1], Map.of()));
+    assertEquals("ACTIVE", practice.history(f[0]).get(0).get("status"));
+    assertEquals(1, practice.history(f[0]).get(0).get("answeredCount"));
   }
   @Test void requiresQuestionIdentityAndKeepsTheOriginalMaterialSnapshot() {
     var f = fixture();

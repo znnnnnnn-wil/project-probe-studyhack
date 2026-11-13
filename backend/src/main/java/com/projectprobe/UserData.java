@@ -10,7 +10,7 @@ class UserData {
   UserData(Store s, AccountSecurity security, ProjectService projects) { this.s = s; this.security = security; this.projects = projects; }
   void idle(String user) {
     int active = s.db.queryForObject("SELECT COUNT(*) FROM trainings WHERE user_id=? AND status='GENERATING' AND lease_until>?", Integer.class, user, now());
-    active += s.db.queryForObject("SELECT COUNT(*) FROM project_trials WHERE user_id=? AND status='GENERATING' AND lease_until>?", Integer.class, user, now());
+    active += s.db.queryForObject("SELECT COUNT(*) FROM project_trials WHERE user_id=? AND lease_until>?", Integer.class, user, now());
     active += s.db.queryForObject("SELECT COUNT(*) FROM input_limits WHERE user_id=? AND lease_until>?", Integer.class, user, now());
     active += s.db.queryForObject("SELECT COUNT(*) FROM extraction_limits WHERE user_id=? AND lease_until>?", Integer.class, user, now());
     if (active > 0) throw error(409, "仍有生成或导入任务，请等待完成或恢复后再清理");

@@ -12,6 +12,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(
   properties = {
+    "app.origin=http://localhost:5173",
     "spring.datasource.url=jdbc:h2:mem:request-boundary;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
     "app.model-mode=demo",
     "app.payment.mode=mock",

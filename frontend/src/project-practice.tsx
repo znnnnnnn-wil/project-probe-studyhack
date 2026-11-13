@@ -8,11 +8,13 @@ import { PracticeNext } from "./practice-next";
 import { PracticeReview } from "./practice-review";
 import type { Project } from "./types";
 import { EvidenceReview } from "./evidence-review";
+import { PracticeRetest } from "./practice-retest";
+import "./experience-report.css";
 
 export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, busy }: Actions & {
   projectId: string; disabled: boolean; onSaved: (project: Project) => void; onReview: () => void;
 }) {
-  const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit } = useProjectPractice(projectId);
+  const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, accept } = useProjectPractice(projectId);
   const [expanded, setExpanded] = useState(true);
   const turn = value.turns?.at(-1);
   const multi = (value.maxTurns || 1) > 1;
@@ -25,11 +27,18 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
   const exportPractice = () => {
     const report = value.report;
     if (!report) return;
+    const retest = value.retest;
+    const original = value.turns?.find(t => t.id === retest?.turnId);
+    const comparison = retest?.report?.comparisons?.[0];
     const text = ["# 项目追问官 · 项目练习复盘", `反馈模式：${value.modelMode === "live" ? "AI 模型，结论仍需核对" : "规则演示，不构成 AI 技术评估"}`,
       "## 清晰的部分", ...report.clearParts.map(t => "- " + t),
       ...report.findings.flatMap((finding, i) => [`\n## 补充方向 ${i + 1}：${finding.topic}`, finding.assessment, "建议任务：" + finding.task,
         ...finding.evidence.map(e => "原回答：" + e.quote), ...finding.materials.map(m => "材料依据：" + m.text)]),
       "\n## 完整问答", ...(value.turns || []).flatMap((t, i) => [`\n### ${i + 1}. ${t.question}`, t.answer]),
+      ...(retest?.status === "COMPLETED" && original
+        ? ["\n## 专项复测", original.question, "初答：" + original.answer, "补答：" + retest.answer,
+          comparison?.assessment || "请结合两次原回答自行核对新增细节与待验证事项。"]
+        : []),
       "\n回答属于用户自述，技术结论仍需结合代码与测试核对；不承诺面试或录用结果。"].join("\n\n");
     const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = "项目追问官-项目训练复盘.md"; link.click();
@@ -67,6 +76,8 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
           <EvidenceReview finding={f} />
           {f.evidence.length > 0 && <details><summary>查看回答依据</summary>{f.evidence.map((e, n) => <blockquote key={e.turnId + n}>{e.quote}</blockquote>)}</details>}
         </article>)}</div>
+        <PracticeRetest projectId={projectId} report={value.report} retest={value.retest}
+          disabled={disabled || busy || loadError} onChange={accept} reload={load} />
         <p className="practice-footnote">复盘只使用本轮已提交的回答。补充说明属于你的自述，仍需结合代码与测试核对。</p>
         <PracticeNext projectId={projectId} answer={value.turns?.map(t => t.answer).filter(Boolean).join("\n\n") || ""} disabled={disabled}
           onSaved={onSaved} onReview={onReview} run={run} busy={busy} />

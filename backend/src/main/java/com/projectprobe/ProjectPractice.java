@@ -10,6 +10,30 @@ class ProjectPractice {
   @org.springframework.beans.factory.annotation.Value("${app.practice-max-turns:1}") int maxTurns;
   @org.springframework.beans.factory.annotation.Autowired JourneyMetrics journey;
   ProjectPractice(Store s, ProjectService projects, ModelService model) { this.s = s; this.projects = projects; this.model = model; }
+  List<Map<String, Object>> history(String user) {
+    return s.db.queryForList(
+      "SELECT t.project_id,t.status,t.body,t.lease_until FROM project_trials t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status<>'CLEARED'",
+      user
+    ).stream().map(row -> {
+      var body = s.decode(row.get("body"));
+      var project = PracticeRetest.object(body.get("project"));
+      var retest = PracticeRetest.object(body.get("retest"));
+      return Map.<String, Object>of(
+        "projectId", row.get("project_id"),
+        "name", str(project, "name"),
+        "status", status(row),
+        "answeredCount", ReportComparison.answered(body, "turns").size(),
+        "maxTurns", body.getOrDefault("maxTurns", 1),
+        "retestCompleted", "COMPLETED".equals(retest.get("status"))
+      );
+    }).toList();
+  }
+
+  private String status(Map<String, Object> row) {
+    return "GENERATING".equals(row.get("status")) && ((Number) row.get("lease_until")).longValue() <= now()
+      ? "FAILED" : str(row, "status");
+  }
+
   Map<String, Object> get(String user, String project) {
     projects.get(user, project);
     var rows = s.db.queryForList("SELECT * FROM project_trials WHERE user_id=?", user);
@@ -18,7 +42,11 @@ class ProjectPractice {
     if (!project.equals(row.get("project_id")) || "CLEARED".equals(row.get("status"))) return Map.of("status", "USED");
     var result = s.decode(row.get("body"));
     long lease = ((Number) row.get("lease_until")).longValue();
-    result.put("status", "GENERATING".equals(row.get("status")) && lease <= now() ? "FAILED" : row.get("status"));
+    result.put("status", status(row));
+    if (result.get("retest") instanceof Map<?, ?> && lease <= now()) {
+      var retest = PracticeRetest.object(result.get("retest"));
+      if ("GENERATING".equals(retest.get("status"))) retest.put("status", "FAILED");
+    }
     result.put("leaseUntil", lease); return result;
   }
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
