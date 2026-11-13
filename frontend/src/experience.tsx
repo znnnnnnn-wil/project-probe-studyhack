@@ -21,8 +21,14 @@ import {
   samples,
 } from "./experience-data";
 import "./competition.css";
+import { QuickExperience } from "./quick-experience";
 
 export function ExperiencePage() {
+  const params = new URLSearchParams(location.hash.split("?")[1]);
+  return params.get("mode") === "quick" ? <QuickExperience /> : <FullExperience />;
+}
+
+function FullExperience() {
   const [state, setState] = useState(() => {
     const saved = readExperience();
     const selected = new URLSearchParams(location.hash.split("?")[1]).get(
