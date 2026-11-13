@@ -22,8 +22,9 @@ import { syncSessionUser } from "./session-user";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 const Home = lazy(() =>
-  import("./home").then((module) => ({ default: module.Home })),
+  import("./landing").then((module) => ({ default: module.Home })),
 );
+const Experience = lazy(() => import("./experience").then(module => ({ default: module.ExperiencePage })));
 const Account = lazy(() => import("./account").then(module => ({ default: module.Account })));
 const PrivacyInfo = lazy(() => import("./privacy").then(module => ({ default: module.PrivacyInfo })));
 const Login = lazy(() =>
@@ -64,6 +65,7 @@ function App() {
     paymentConfigured: boolean;
   } | null>(null);
   const [error, setError] = useState("");
+  const [serviceError, setServiceError] = useState("");
   const [pendingRequests, setPendingRequests] = useState(0);
   const busy = pendingRequests > 0;
   const [menu, setMenu] = useState(false);
@@ -80,17 +82,19 @@ function App() {
       window.scrollTo(0, 0);
     };
     window.addEventListener("hashchange", change);
-    api<typeof config>("/config")
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    api<typeof config>("/config", "GET", undefined, controller.signal)
       .then(setConfig)
-      .catch(() => setError("暂时无法连接服务，请确认后端已启动后刷新。"));
-    api<typeof user>("/me")
+      .catch(() => setServiceError("自有项目服务暂未连接。你可以返回首页免登录体验示例；本地使用请先启动后端再刷新。"));
+    api<typeof user>("/me", "GET", undefined, controller.signal)
       .then((value) => {
         if (value) syncSessionUser(value.id);
         setUser(value);
       })
       .catch(() => {})
-      .finally(() => setReady(true));
-    return () => window.removeEventListener("hashchange", change);
+      .finally(() => { setReady(true); });
+    return () => { window.removeEventListener("hashchange", change); window.clearTimeout(timeout); controller.abort(); };
   }, []);
   const run = useCallback(async (fn: () => Promise<void>) => {
     const version = navigationVersion.current;
@@ -114,7 +118,8 @@ function App() {
     }
   }, []);
   const props = { run, busy };
-  const nav = path.split("/")[1];
+  const nav = path.split("?")[0].split("/")[1];
+  const publicPage = nav === "experience" || (path === "/" && !user);
   useEffect(() => {
     if (
       ready &&
@@ -145,6 +150,7 @@ function App() {
           {menu ? <X /> : <Menu />}
         </button>
         <nav className={menu ? "open" : ""}>
+          <a className={nav === "experience" ? "selected" : ""} href="#/experience">示例练习</a>
           <a
             className={nav === "projects" || (user && !nav) ? "selected" : ""}
             href="#/projects"
@@ -153,9 +159,6 @@ function App() {
           </a>
           <a className={nav === "history" ? "selected" : ""} href="#/history">
             训练记录
-          </a>
-          <a className={nav === "shop" ? "selected" : ""} href="#/shop">
-            训练包与订单
           </a>
         </nav>
         <div className="account">
@@ -185,18 +188,14 @@ function App() {
         </div>
       </header>
       <div className="mode-strip">
-        {config?.modelMode === "demo" && <span>规则演示 · 非 AI 技术评估</span>}
+        <span><span className="status-dot" /> {nav === "experience" ? "本地规则演示 · 不调用模型" : config?.modelMode === "live" ? "真实 AI 模式 · 反馈可回溯原文" : "规则演示 · 非 AI 技术评估"}</span>
         <span className="strip-right">
-          {config?.paymentMode === "mock"
-            ? "开发模拟支付 · 不产生真实扣款"
-            : config?.paymentMode === "production"
-              ? "正式支付宝支付 · 会产生真实扣款"
-              : "官方沙箱 · 非真实交易"}
+          从材料出发 · 把项目讲明白
         </span>
       </div>
-      {error && (
+      {(error || (!publicPage && serviceError)) && (
         <div role="alert" className="error">
-          <span>{error}</span>
+          <span>{error || serviceError}</span>
           <button onClick={() => window.location.reload()}>重新加载</button>
           <button aria-label="关闭提示" onClick={() => setError("")}>
             <X size={17} />
@@ -211,16 +210,15 @@ function App() {
       <main>
         <PageBoundary key={`${user?.id || "guest"}:${path}`}>
           <Suspense fallback={<Loading />}>
-            {!ready ? (
-              <Loading />
-            ) : nav === "privacy" ? <PrivacyInfo /> : path === "/" && !user ? (
+            {nav === "experience" ? <Experience key={path} /> : nav === "privacy" ? <PrivacyInfo /> : path === "/" && !user ? (
               <Home
+                backendReady={!!config}
                 onStart={() => {
                   sessionStorage.setItem("auth:return", "/projects/new");
                   go("/login");
                 }}
               />
-            ) : !user || path === "/login" ? (
+            ) : !ready ? <Loading /> : !user || path === "/login" ? (
               <Login
                 {...props}
                 onLogin={(u) => {
@@ -251,7 +249,7 @@ function App() {
             ) : nav === "report" ? (
               <ReportPage key={path} id={path.split("/")[2]} {...props} />
             ) : nav === "shop" ? (
-              <ShopPage {...props} />
+              <Empty title="参赛体验无需购买" text="返回项目页开始免费训练，或免登录体验五轮示例。" action={() => go("/projects")} />
             ) : nav === "payment-return" ? (
               <PaymentReturn
                 {...props}
