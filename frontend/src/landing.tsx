@@ -35,8 +35,8 @@ export function Home({
             从“我做过”到“我讲得清”。围绕你的职责、实现与取舍连续追问，把需要补充的地方，落回原回答和项目材料。
           </p>
           <div className="probe-hero-actions">
-            <button className="button" onClick={() => go("/experience")}>
-              免登录体验五轮 <ArrowRight size={17} />
+            <button className="button" onClick={() => go("/experience?mode=quick")}>
+              免登录体验追问 <ArrowRight size={17} />
             </button>
             <button
               className="probe-text-button"
@@ -49,6 +49,7 @@ export function Home({
           <div className="probe-hero-note">
             <ShieldCheck size={14} /> 示例在浏览器内运行，不上传你的回答
           </div>
+          <a className="probe-text-button" href="#/experience">免登录体验五轮</a>
           {!backendReady && (
             <small>当前可体验示例；自有项目训练需连接后端服务。</small>
           )}
