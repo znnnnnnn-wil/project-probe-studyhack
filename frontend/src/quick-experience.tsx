@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, FileText } from "lucide-react";
 import { demoProject } from "./api";
 import { bookingFollowup, bookingQuestion, bookingReview, exampleAnswers } from "./booking-followup";
@@ -7,6 +7,8 @@ export function QuickExperience() {
   const [before, setBefore] = useState("");
   const [after, setAfter] = useState("");
   const [stage, setStage] = useState<"first" | "followup" | "review">("first");
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { heading.current?.focus(); }, [stage]);
   const followup = bookingFollowup(before);
   const result = bookingReview(before, after);
 
@@ -36,7 +38,7 @@ export function QuickExperience() {
         <div className="experience-conversation">
           {stage === "review" ? (
             <section aria-labelledby="quick-review-title">
-              <h2 id="quick-review-title" tabIndex={-1} ref={node => node?.focus()}>两次回答对照</h2>
+              <h2 id="quick-review-title" tabIndex={-1} ref={heading}>两次回答对照</h2>
               <div className="experience-evidence-pair">
                 <div><span className="probe-label">初答</span><p>{before}</p></div>
                 <div><span className="probe-label">补答</span><p>{after}</p></div>
@@ -56,7 +58,7 @@ export function QuickExperience() {
             </section>
           ) : (
             <>
-              <h2 tabIndex={-1} ref={node => node?.focus()} key={stage}>
+              <h2 tabIndex={-1} ref={heading} key={stage}>
                 {stage === "first" ? bookingQuestion : followup.question}
               </h2>
               {stage === "first" ? (

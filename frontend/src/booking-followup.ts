@@ -6,12 +6,13 @@ const signals: [Detail, RegExp][] = [
   ["测试输入", /(?:并发|同时).{0,18}(?:同一|同个|同一个).{0,8}(?:座位|时段)|(?:同一|同个|同一个).{0,10}(?:座位|时段).{0,18}(?:并发|同时)/],
   ["预期结果", /(?:只有|仅有|仅|只|恰好|最终(?:只有|仅有|只|为)?).{0,6}(?:一|1)(?:笔|条|个|次|份)?.{0,10}(?:成功|有效预约|预约记录)|(?:一|1)(?:笔|条|个|次).{0,6}(?:成功|有效预约).{0,8}(?:另一|另一个|其余|失败)/],
 ];
+const uncertain = /尚未|未曾|没有|没法|没(?:做|用|加|设|返回|测|跑|验证)|未(?:做|用|加|设|返回|测|跑|验证)|不确定|不知道|不清楚|不(?:会|能|返回|采用|使用|支持)/;
 
 function findDetails(answer: string) {
   const clauses = answer.split(/[。！？；，、,.!?;\n]+/);
   return Object.fromEntries(signals.flatMap(([name, pattern]) => {
     const quote = clauses.find(clause =>
-      pattern.test(clause) && !/没(?:有)?(?:做|用|加|设|返回|测|跑|验证)|未(?:做|用|加|设|返回|测|跑|验证)|尚未|不确定|不知道|不清楚|不能/.test(clause),
+      pattern.test(clause) && !uncertain.test(clause),
     )?.trim();
     return quote ? [[name, quote]] : [];
   })) as Partial<Record<Detail, string>>;

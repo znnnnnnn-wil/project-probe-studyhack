@@ -23,4 +23,9 @@ test("免登录短体验随初答改变追问，并区分补充细节和实际�
   await expect(page.getByText(/测试输入 · “两个请求并发预约同一座位”/)).toBeVisible();
   await expect(page.getByText(/预期结果 · “预期只有一笔有效预约”/)).toBeVisible();
   await expect(page.getByText(/实际实现和测试结果仍需核对/)).toBeVisible();
+
+  await page.getByRole("button", { name: "试试另一种回答" }).click();
+  await page.getByRole("textbox", { name: "初答" }).fill("加了数据库唯一约束。现在不会返回 409。");
+  await page.getByRole("button", { name: "看下一问" }).click();
+  await expect(page.getByRole("heading", { name: /会向调用方返回什么/ })).toBeVisible();
 });

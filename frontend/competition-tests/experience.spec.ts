@@ -9,7 +9,7 @@ test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", as
   );
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /做过的项目/ })).toBeVisible();
-  await page.getByRole("button", { name: "免登录体验五轮" }).click();
+  await page.getByRole("link", { name: "免登录体验五轮" }).click();
   await page.getByRole("button", { name: "开始五轮练习" }).click();
   await page.getByLabel("本轮回答").fill("第一轮草稿：我负责预约接口。");
   await page.reload();
