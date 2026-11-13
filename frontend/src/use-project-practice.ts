@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
 import type { Report, Turn } from "./types";
 
-export type Practice = { status: string; turns?: Turn[]; report?: Report; modelMode?: string; leaseUntil?: number };
+export type Practice = { status: string; turns?: Turn[]; report?: Report; modelMode?: string; leaseUntil?: number; maxTurns?: number };
 export function useProjectPractice(projectId: string) {
   const [value, setValue] = useState<Practice>({ status: "LOADING" });
   const [answer, setAnswer] = useState("");
@@ -15,17 +15,26 @@ export function useProjectPractice(projectId: string) {
   const working = useRef(false);
   const reading = useRef(false);
   const current = useRef(answer); current.current = answer;
+  const acceptedTurn = useRef("");
   const key = "practice-draft:" + projectId;
+  const turnKey = "practice-draft-turn:" + projectId;
   const accept = useCallback((next: Practice) => {
     setValue(next); setError(""); setLoadError(false);
-    const submitted = next.turns?.[0]?.answer;
+    const turn = next.turns?.at(-1);
+    const submitted = turn?.answer;
+    const draftTurn = sessionStorage.getItem(turnKey);
+    const changed = (!!acceptedTurn.current && acceptedTurn.current !== turn?.id) || (!!draftTurn && !!turn && draftTurn !== turn.id);
+    acceptedTurn.current = turn?.id || "";
     if (next.report || next.status === "USED") {
-      sessionStorage.removeItem(key); setAnswer(""); setNotice("");
+      sessionStorage.removeItem(key); sessionStorage.removeItem(turnKey); setAnswer(""); setNotice("");
     } else if (submitted) {
-      setAnswer(submitted); sessionStorage.removeItem(key);
+      setAnswer(submitted); sessionStorage.removeItem(key); sessionStorage.removeItem(turnKey);
       setNotice("回答已提交并保存在服务端；恢复生成不会重复提交。");
+    } else if (changed) {
+      sessionStorage.removeItem(key); sessionStorage.removeItem(turnKey); setAnswer(""); current.current = "";
+      setNotice("上一题回答已保存，请继续当前追问。");
     }
-  }, [key]);
+  }, [key, turnKey]);
   const load = useCallback(async () => {
     if (working.current || reading.current) return;
     reading.current = true;
@@ -51,7 +60,7 @@ export function useProjectPractice(projectId: string) {
     const timer = window.setInterval(() => void load(), 2500);
     return () => window.clearInterval(timer);
   }, [value.status, load]);
-  const submitted = !!value.turns?.[0]?.answer;
+  const submitted = !!value.turns?.at(-1)?.answer;
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (current.current.trim() && !submitted && !value.report) { event.preventDefault(); event.returnValue = ""; }
@@ -62,13 +71,14 @@ export function useProjectPractice(projectId: string) {
   const edit = (text: string) => {
     current.current = text; setAnswer(text);
     sessionStorage.setItem(key, text);
+    if (value.turns?.at(-1)?.id) sessionStorage.setItem(turnKey, value.turns.at(-1)!.id);
     setNotice("草稿自动保存在当前标签页，提交后才用于AI反馈。");
   };
   const submit = async () => {
     if (working.current || loadError || ["LOADING", "GENERATING"].includes(value.status)) return;
     working.current = true; ++sequence.current; setPending(true); setError("");
     try {
-      const next = await api<Practice>(`/projects/${projectId}/practice`, "POST", submitted ? {} : answer.trim() ? { answer } : {});
+      const next = await api<Practice>(`/projects/${projectId}/practice`, "POST", submitted ? {} : answer.trim() ? { answer, turnId: value.turns?.at(-1)?.id } : {});
       if (mounted.current) accept(next);
     } catch (e) {
       if (!mounted.current) return;

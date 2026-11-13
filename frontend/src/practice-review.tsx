@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "./api";
 import { Button } from "./ui";
 import type { Actions } from "./ui";
+import { competitionMode } from "./competition-mode";
 
 export function PracticeReview({ projectId, run, busy }: Actions & { projectId: string }) {
   const [score, setScore] = useState(0), [again, setAgain] = useState("");
@@ -14,8 +15,8 @@ export function PracticeReview({ projectId, run, busy }: Actions & { projectId: 
         <button key={n} type="button" aria-pressed={score === n} disabled={busy} onClick={() => setScore(n)}>{n}分</button>)}</div></div>
       <div role="group" aria-label="是否愿意继续使用"><span>是否愿意用它练习另一个项目？</span><div className="review-choices">{["愿意继续", "还不确定", "暂时不愿意"].map(value =>
         <button key={value} type="button" aria-pressed={again === value} disabled={busy} onClick={() => setAgain(value)}>{value}</button>)}</div></div>
-      <div role="group" aria-label="训练包意愿"><span>对训练包的想法（可选）</span><div className="review-choices">{["愿意考虑购买", "需要更多体验", "暂无购买意愿"].map(value =>
-        <button key={value} type="button" aria-pressed={price === value} disabled={busy} onClick={() => setPrice(value)}>{value}</button>)}</div></div>
+      {!competitionMode && <div role="group" aria-label="训练包意愿"><span>对训练包的想法（可选）</span><div className="review-choices">{["愿意考虑购买", "需要更多体验", "暂无购买意愿"].map(value =>
+        <button key={value} type="button" aria-pressed={price === value} disabled={busy} onClick={() => setPrice(value)}>{value}</button>)}</div></div>}
       <label>最卡住的一步（可选）<textarea rows={2} maxLength={500} value={detail} onChange={e => setDetail(e.target.value)} /></label>
       <Button secondary disabled={busy || !score || !again} onClick={() => run(async () => {
         await api("/feedback", "POST", { kind: "GENERAL", requestKey: "trial-review-" + projectId,

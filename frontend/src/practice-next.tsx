@@ -12,7 +12,7 @@ export function PracticeNext({ projectId, answer, disabled, onSaved, onReview, r
   const [notice, setNotice] = useState("");
   return <section className="practice-next" aria-label="体验后的下一步">
     <h3>把刚才讲清楚的内容，带到下一轮</h3>
-    <p>① 补充项目材料（可选） → ② 提取并核对事实 → ③ 开始完整深挖</p>
+    <p>① 补充项目材料（可选） → ② 提取并核对事实 → ③ 根据复盘继续准备</p>
     <div className="action-row">
       <Button secondary disabled={busy || disabled || !answer.trim()} onClick={() => run(async () => {
         const current = await api<Project>("/projects/" + projectId);

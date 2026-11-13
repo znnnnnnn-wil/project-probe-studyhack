@@ -21,6 +21,7 @@ import { useMounted } from "./use-read-scope";
 import { ProjectPractice } from "./project-practice";
 import "./editor.css";
 import { TrainingSelect } from "./training-select";
+import { competitionMode } from "./competition-mode";
 
 const fields: [keyof Project, string, string][] = [
   ["name", "项目名称", "例如：校园自习室预约系统"],
@@ -504,6 +505,7 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
           )}
         </div>
         <aside className="training-aside">
+          {competitionMode ? <div className="training-readiness"><div className="training-heading"><span><MessageSquare size={20} /></span><div><small>保存材料，就可以开始</small><h2>五轮项目追问</h2></div></div><p>从你的职责、实现和验证出发，每账号一轮免费训练，过程不需要订单。</p><ul className="readiness-list"><li>{id === "new" || dirty ? <Clock size={15} /> : <Check size={15} />}{id === "new" ? "先填写并保存项目" : dirty ? "请先保存材料修改" : "材料已保存，可开始训练"}</li><li><ShieldCheck size={15} /> 不确定的事实可以保留待确认</li></ul><Button secondary disabled={id === "new" || dirty || busy} onClick={() => document.getElementById("project-practice")?.scrollIntoView({ behavior: "smooth", block: "start" })}>前往五轮训练 <ArrowRight size={16} /></Button></div> :
           <div className="training-readiness">
             <div className="training-heading"><span><MessageSquare size={20} /></span><div><small>核对后，进入完整深挖</small><h2>本次训练</h2></div></div>
             <ul className="readiness-list">
@@ -586,6 +588,7 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
               </Button>
             )}
           </div>
+          }
           {ongoing.map((t) => (
             <a
               className="resume-row editor-resume"
