@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
 import type { Report, Turn } from "./types";
-
-export type Practice = { status: string; turns?: Turn[]; report?: Report; modelMode?: string; leaseUntil?: number; maxTurns?: number };
+export type Retest = {
+  findingIndex: number;
+  turnId: string;
+  answer: string;
+  status: "GENERATING" | "FAILED" | "COMPLETED";
+  report?: Report;
+};
+export type Practice = { status: string; turns?: Turn[]; report?: Report; modelMode?: string; leaseUntil?: number; maxTurns?: number; retest?: Retest };
 export function useProjectPractice(projectId: string) {
   const [value, setValue] = useState<Practice>({ status: "LOADING" });
   const [answer, setAnswer] = useState("");
@@ -55,11 +61,12 @@ export function useProjectPractice(projectId: string) {
     void load();
     return () => { mounted.current = false; ++sequence.current; };
   }, [key, load]);
+  const generating = value.status === "GENERATING" || value.retest?.status === "GENERATING";
   useEffect(() => {
-    if (value.status !== "GENERATING") return;
+    if (!generating) return;
     const timer = window.setInterval(() => void load(), 2500);
     return () => window.clearInterval(timer);
-  }, [value.status, load]);
+  }, [generating, load]);
   const submitted = !!value.turns?.at(-1)?.answer;
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -91,5 +98,5 @@ export function useProjectPractice(projectId: string) {
       }
     } finally { working.current = false; if (mounted.current) setPending(false); }
   };
-  return { value, answer, edit, error, loadError, pending, notice, submitted, load, submit };
+  return { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, accept };
 }

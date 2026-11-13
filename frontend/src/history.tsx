@@ -7,6 +7,15 @@ import type { Actions } from "./ui";
 import { useApiResource } from "./use-api-resource";
 import { TrainingSelect } from "./training-select";
 
+type PracticeRecord = {
+  projectId: string;
+  name: string;
+  status: string;
+  answeredCount: number;
+  maxTurns: number;
+  retestCompleted: boolean;
+};
+
 function Transcript({ id }: { id: string }) {
   const { data, error, reload } = useApiResource<Training>("/trainings/" + id);
   if (error)
@@ -85,6 +94,7 @@ function HistoryRecord({ training: t }: { training: TrainingSummary }) {
 export function History(_props: Actions) {
   const [key, setKey] = useState("");
   const [offset, setOffset] = useState(0);
+  const practice = useApiResource<PracticeRecord[]>("/practice-history");
   const page = useApiResource<ListPage<TrainingSummary>>(
     "/training-page?limit=20&offset=" +
       offset +
@@ -98,8 +108,34 @@ export function History(_props: Actions) {
       <PageHead
         eyebrow="每一步都有记录"
         title="训练记录"
-        text="刷新或离开页面不会丢失已提交的回答，继续原训练不重复扣次。"
+        text="回看已提交的回答、复盘和专项复测，或继续尚未完成的训练。"
       />
+      {practice.error && (
+        <div role="alert">
+          {practice.error} <Button secondary onClick={practice.reload}>重新读取免费记录</Button>
+        </div>
+      )}
+      {!!practice.data?.length && (
+        <section className="panel history-list" aria-label="免费项目训练">
+          <h2>免费项目训练</h2>
+          {practice.data.map(record => (
+            <article className="history-record" key={record.projectId}>
+              <a className="history-link" href={`#/projects/${record.projectId}`}>
+                <div className="card-icon"><MessageSquare /></div>
+                <div>
+                  <h3>{record.name}</h3>
+                  <p>已回答 {record.answeredCount} / {record.maxTurns} 题
+                    {record.retestCompleted && " · 专项复测已完成"}
+                    {record.status === "COMPLETED" ? " · 查看复盘" : " · 继续训练"}
+                  </p>
+                </div>
+                <span className="badge">{statusLabel[record.status]}</span>
+                <ChevronRight />
+              </a>
+            </article>
+          ))}
+        </section>
+      )}
       <div className="panel history-list">
         <TrainingSelect label="筛选训练项目" value={key} disabled={_props.busy || !choices.data}
           onChange={value => { setKey(value); setOffset(0); }}
@@ -121,7 +157,7 @@ export function History(_props: Actions) {
           </div>
         ) : !page.data ? (
           <Loading />
-        ) : !page.data.total ? (
+        ) : !page.data.total && (practice.loading || practice.data?.length) ? null : !page.data.total ? (
           <Empty
             title="还没有开始训练"
             text="先创建并核对项目档案，开始你的第一次深挖。"
