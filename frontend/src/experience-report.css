@@ -1,0 +1,132 @@
+.experience-report-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+.experience-report-bar > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+.experience-report-item {
+  background: #fff;
+  border: 1px solid #dfe6d8;
+  border-radius: 10px;
+  padding: 28px;
+  margin-bottom: 18px;
+}
+.experience-report-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.experience-report-title > span {
+  font:
+    12px Consolas,
+    monospace;
+  color: #98aa87;
+}
+.experience-report-title h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.experience-report-title label {
+  margin: 0 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+}
+.experience-report-title input {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  accent-color: #3e7552;
+}
+.experience-report-item > h3 {
+  white-space: pre-wrap;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.9;
+}
+.experience-evidence-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+.experience-evidence-pair > div {
+  padding: 17px;
+  border-radius: 5px;
+  background: #f7f9f3;
+  min-width: 0;
+}
+.experience-evidence-pair p {
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 10px 0 0;
+}
+.experience-task {
+  padding: 14px 17px;
+  background: #edf4e5;
+  border-left: 2px solid #a3bd82;
+  font-size: 12px;
+  line-height: 1.8;
+  margin-bottom: 20px;
+}
+.experience-task strong {
+  margin-right: 15px;
+  color: #477341;
+  font-size: 11px;
+}
+.experience-next {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px 0;
+}
+.experience-next > svg {
+  flex-shrink: 0;
+  color: #84a16d;
+}
+.experience-next p {
+  font-size: 11px;
+  margin: 0;
+  flex: 1;
+}
+@media (max-width: 740px) {
+  .experience-report-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .experience-report-bar .button {
+    justify-content: center;
+  }
+  .experience-report-item {
+    padding: 21px 18px;
+  }
+  .experience-report-title {
+    gap: 9px;
+  }
+  .experience-report-title h2 {
+    font-size: 17px;
+  }
+  .experience-report-title label {
+    font-size: 10px;
+  }
+  .experience-evidence-pair {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .experience-next {
+    flex-wrap: wrap;
+  }
+  .experience-next .probe-text-button {
+    width: 100%;
+  }
+}
