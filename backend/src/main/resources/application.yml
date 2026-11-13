@@ -1,5 +1,5 @@
 server:
-  port: ${PORT:8080}
+  port: ${PORT:8180}
   address: ${BIND_ADDRESS:127.0.0.1}
   forward-headers-strategy: none
   error:
@@ -27,7 +27,8 @@ spring:
   jackson:
     default-property-inclusion: non_null
 app:
-  origin: ${APP_ORIGIN:http://localhost:5173}
+  practice-max-turns: ${PRACTICE_MAX_TURNS:5}
+  origin: ${APP_ORIGIN:http://localhost:5273}
   trusted-proxy-addresses: ${TRUSTED_PROXY_ADDRESSES:}
   secure-cookie: ${SECURE_COOKIE:false}
   model-mode: ${MODEL_MODE:demo}

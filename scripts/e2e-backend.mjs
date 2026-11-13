@@ -18,9 +18,10 @@ const child = spawn(
     stdio: "inherit",
     env: {
       ...process.env,
-      PORT: "18082",
+      PORT: process.env.PROBE_TEST_PORT || "18082",
       BIND_ADDRESS: "127.0.0.1",
-      APP_ORIGIN: "http://localhost:5174",
+      APP_ORIGIN: process.env.PROBE_TEST_ORIGIN || "http://localhost:5174",
+      PRACTICE_MAX_TURNS: process.env.PRACTICE_MAX_TURNS || "1",
       TRUSTED_PROXY_ADDRESSES: "",
       DB_URL:
         "jdbc:h2:mem:browser-regression;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",

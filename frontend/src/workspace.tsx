@@ -12,6 +12,7 @@ import {
 import { api, go } from "./api";
 import type { ProjectSummary, TrainingSummary, Shop } from "./types";
 import { trainingQuota } from "./quota";
+import { competitionMode } from "./competition-mode";
 
 export function purchaseFrom(projectId?: string) {
   if (projectId) sessionStorage.setItem("purchase:project", projectId);
@@ -102,7 +103,7 @@ export function Workspace({
           ["项目档案", data?.projects.length],
           ["待继续训练", data?.activeCount],
           ["已完成报告", data?.completedCount],
-          ["可用深挖", quota],
+          [competitionMode ? "免费练习" : "可用深挖", competitionMode ? "5 题" : quota],
         ].map(([name, value]) => (
           <div key={name}>
             <span>{name}</span>
@@ -275,6 +276,11 @@ export function Workspace({
               )}
             </section>
             <aside className="workspace-aside">
+              {competitionMode ? <>
+                <MessageSquare size={23} /><h2>从自己的项目开始</h2><p>每账号可免费完成一轮五题练习，不需要购买训练包。进入一个项目，保存材料后即可开始。</p>
+                <a className="button secondary" href="#/experience">先试合成示例 <ArrowRight size={15} /></a><hr />
+                <h3>练习路线</h3><ol className="workflow-list"><li>保存自己的项目材料</li><li>围绕实现连续追问五轮</li><li>回看原回答与材料引用</li><li>记录补充任务并导出复盘</li></ol>
+              </> : <>
               <CreditCard size={21} />
               <h2>训练权益</h2>
               <div className="quota-number">
@@ -298,6 +304,7 @@ export function Workspace({
                 <li>回答连续项目追问</li>
                 <li>补充任务后关联复测</li>
               </ol>
+              </>}
             </aside>
           </div>
         </>
