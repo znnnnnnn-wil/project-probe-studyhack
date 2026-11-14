@@ -6,14 +6,7 @@ import React, {
   lazy,
   Suspense,
 } from "react";
-import {
-  ArrowUpRight,
-  MessageSquare,
-  LogOut,
-  Menu,
-  X,
-  LoaderCircle,
-} from "lucide-react";
+import { LogOut, Menu, X, LoaderCircle } from "lucide-react";
 import { api, ApiError, go } from "./api";
 import { Workspace } from "./workspace";
 import { Loading, Empty, PageBoundary } from "./ui";
@@ -21,6 +14,7 @@ import { syncSessionUser } from "./session-user";
 
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import "./theme.css";
 const Home = lazy(() =>
   import("./landing").then((module) => ({ default: module.Home })),
 );
@@ -119,7 +113,14 @@ function App() {
   }, []);
   const props = { run, busy };
   const nav = path.split("?")[0].split("/")[1];
-  const publicPage = nav === "experience" || (path === "/" && !user);
+  const publicHome = path === "/" && !user;
+  const publicPage = nav === "experience" || publicHome;
+  const projectsActive = nav === "projects" || (!!user && !nav);
+  const modeLabel = nav === "experience"
+    ? "本地规则演示 · 不调用模型"
+    : config?.modelMode === "live"
+      ? "真实 AI 模式 · 反馈可回溯原文"
+      : "规则演示 · 非 AI 技术评估";
   useEffect(() => {
     if (
       ready &&
@@ -135,29 +136,37 @@ function App() {
   }, [path, ready, user]);
   return (
     <>
-      <header>
+      <header className={publicHome ? "site-header site-header--public-home" : "site-header"}>
+        <div className="header-inner">
         <a className="brand" href="#/">
-          <span className="brand-icon">
-            <MessageSquare size={19} />
-          </span>
-          项目追问官<span className="brand-dot">·</span>
+          <span className="brand-icon" aria-hidden="true">问</span>
+          项目追问官
         </a>
         <button
           className="menu-toggle"
           aria-label="切换导航"
+          aria-controls="site-navigation"
+          aria-expanded={menu}
           onClick={() => setMenu(!menu)}
         >
           {menu ? <X /> : <Menu />}
         </button>
-        <nav className={menu ? "open" : ""}>
-          <a className={nav === "experience" ? "selected" : ""} href="#/experience">示例练习</a>
+        <nav id="site-navigation" className={menu ? "open" : ""} aria-label="主导航">
           <a
-            className={nav === "projects" || (user && !nav) ? "selected" : ""}
+            className={nav === "experience" || publicHome ? "selected" : ""}
+            aria-current={nav === "experience" ? "page" : undefined}
+            href="#/experience"
+          >
+            示例练习
+          </a>
+          <a
+            className={projectsActive ? "selected" : ""}
+            aria-current={projectsActive ? "page" : undefined}
             href="#/projects"
           >
             我的项目
           </a>
-          <a className={nav === "history" ? "selected" : ""} href="#/history">
+          <a className={nav === "history" ? "selected" : ""} aria-current={nav === "history" ? "page" : undefined} href="#/history">
             训练记录
           </a>
         </nav>
@@ -181,18 +190,16 @@ function App() {
               </button>
             </>
           ) : (
-            <a href="#/login">
-              登录 / 注册 <ArrowUpRight size={14} />
+            <a className="account-login" href="#/login">
+              登录 / 注册
             </a>
           )}
         </div>
+        </div>
       </header>
-      <div className="mode-strip">
-        <span><span className="status-dot" /> {nav === "experience" ? "本地规则演示 · 不调用模型" : config?.modelMode === "live" ? "真实 AI 模式 · 反馈可回溯原文" : "规则演示 · 非 AI 技术评估"}</span>
-        <span className="strip-right">
-          从材料出发 · 把项目讲明白
-        </span>
-      </div>
+      {!publicPage && (
+        <div className="mode-strip"><span>{modeLabel}</span></div>
+      )}
       {(error || (!publicPage && serviceError)) && (
         <div role="alert" className="error">
           <span>{error || serviceError}</span>
@@ -207,10 +214,10 @@ function App() {
           <LoaderCircle className="spin" size={16} /> 正在处理，请稍候…
         </div>
       )}
-      <main>
+      <main className={publicHome ? undefined : "app-main"}>
         <PageBoundary key={`${user?.id || "guest"}:${path}`}>
           <Suspense fallback={<Loading />}>
-            {nav === "experience" ? <Experience key={path} /> : nav === "privacy" ? <PrivacyInfo /> : path === "/" && !user ? (
+            {nav === "experience" ? <Experience key={path} /> : nav === "privacy" ? <PrivacyInfo /> : publicHome ? (
               <Home
                 backendReady={!!config}
                 onStart={() => {
@@ -268,11 +275,14 @@ function App() {
           </Suspense>
         </PageBoundary>
       </main>
-      <footer>
-        <span>项目追问官</span>
-        <a href="#/privacy">隐私与服务说明</a>
-        <span>每一次追问，都离讲明白更近一步。</span>
-        <small>练习反馈仅供参考，不承诺面试或录用结果。</small>
+      <footer className="site-footer">
+        <div className="footer-bar">
+          <span>项目追问官</span>
+          <div className="footer-links">
+            <a href="#/account">账户与数据</a>
+            <a href="#/privacy">隐私与服务说明</a>
+          </div>
+        </div>
       </footer>
     </>
   );
