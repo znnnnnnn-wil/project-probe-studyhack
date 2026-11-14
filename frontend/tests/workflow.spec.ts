@@ -7,13 +7,13 @@ test("桌面完整闭环：档案、事实、模拟权益、训练、刷新、�
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "项目追问官", exact: true }),
+    page.getByRole("heading", { name: /把项目经历[，,]\s*讲清楚/ }),
   ).toBeVisible();
   await page.screenshot({
     path: "test-results/home-desktop.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "用我的项目体验一题" }).click();
+  await page.getByRole("button", { name: "用我的项目练习" }).click();
   await page.getByLabel("用户名", { exact: true }).fill("e2e-" + Date.now());
   await page
     .getByLabel("密码", { exact: true })
