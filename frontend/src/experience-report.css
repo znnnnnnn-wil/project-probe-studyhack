@@ -3,32 +3,38 @@
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 .experience-report-bar > span {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 13px;
+  color: var(--text);
+  font-size: 14px;
+}
+.experience-report-bar > span > svg {
+  flex-shrink: 0;
+  color: var(--blue);
 }
 .experience-report-item {
-  background: #fff;
-  border: 1px solid #dfe6d8;
-  border-radius: 10px;
-  padding: 28px;
-  margin-bottom: 18px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 21px 22px;
+  margin-bottom: 14px;
 }
 .experience-report-title {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 22px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
 }
 .experience-report-title > span {
-  font:
-    12px Consolas,
-    monospace;
-  color: #98aa87;
+  font: 12px var(--font-mono);
+  color: var(--blue);
 }
 .experience-report-title h2 {
   font-size: 18px;
@@ -39,65 +45,72 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .experience-report-title input {
   width: 15px;
   height: 15px;
   padding: 0;
-  accent-color: #3e7552;
+  accent-color: var(--blue);
 }
 .experience-report-item > h3 {
   white-space: pre-wrap;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.9;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.65;
 }
 .experience-evidence-pair {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
 }
 .experience-evidence-pair > div {
-  padding: 17px;
-  border-radius: 5px;
-  background: #f7f9f3;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--soft);
   min-width: 0;
 }
 .experience-evidence-pair p {
-  font-size: 12px;
+  font-size: 13px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 10px 0 0;
+  margin: 6px 0 0;
+  color: var(--text);
 }
 .experience-task {
-  padding: 14px 17px;
-  background: #edf4e5;
-  border-left: 2px solid #a3bd82;
-  font-size: 12px;
-  line-height: 1.8;
-  margin-bottom: 20px;
+  padding: 11px 14px;
+  background: var(--blue-100);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.65;
+  margin-bottom: 16px;
+}
+.experience-task > p:last-child {
+  margin-bottom: 0;
 }
 .experience-task strong {
-  margin-right: 15px;
-  color: #477341;
-  font-size: 11px;
+  margin-right: 10px;
+  color: var(--blue-deep);
+  font-size: 12px;
 }
 .experience-next {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 20px 0;
+  padding: 12px 0;
 }
 .experience-next > svg {
   flex-shrink: 0;
-  color: #84a16d;
+  color: var(--blue);
 }
 .experience-next p {
-  font-size: 11px;
+  font-size: 12px;
   margin: 0;
   flex: 1;
+  color: var(--muted);
 }
 @media (max-width: 740px) {
   .experience-report-bar {
@@ -108,7 +121,7 @@
     justify-content: center;
   }
   .experience-report-item {
-    padding: 21px 18px;
+    padding: 15px;
   }
   .experience-report-title {
     gap: 9px;
@@ -117,7 +130,7 @@
     font-size: 17px;
   }
   .experience-report-title label {
-    font-size: 10px;
+    font-size: 12px;
   }
   .experience-evidence-pair {
     grid-template-columns: 1fr;
