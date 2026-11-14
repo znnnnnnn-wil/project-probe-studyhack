@@ -1,16 +1,123 @@
-import {
-  ArrowDown,
-  ArrowRight,
-  BookOpen,
-  Check,
-  FileText,
-  GitBranch,
-  Quote,
-  ShieldCheck,
-} from "lucide-react";
-import { go } from "./api";
-import { samples } from "./experience-data";
-import "./competition.css";
+import { useState } from "react";
+import { ArrowLeft, ArrowRight, CalendarClock, Database, FileText } from "lucide-react";
+import { dimensions, samples, sampleQuestionFor } from "./experience-data";
+import "./landing.css";
+
+const scenarioMeta: Record<
+  string,
+  { icon: typeof Database; description: string; implementationFocus: string }
+> = {
+  booking: {
+    icon: Database,
+    description: "并发预约、冲突处理与验证",
+    implementationFocus: "同一座位同一时段的有效预约唯一",
+  },
+  rag: {
+    icon: FileText,
+    description: "文档切分、检索与引用溯源",
+    implementationFocus: "保存文档名和段落编号",
+  },
+  scheduler: {
+    icon: CalendarClock,
+    description: "任务领取、重试与幂等",
+    implementationFocus: "使用更新行数判断是否领取成功",
+  },
+};
+
+const dimensionNames = ["职责", "实现", "失败", "验证", "取舍"];
+const experienceHref = (sample: string) => `#/experience?sample=${sample}`;
+
+function MaterialExcerpt({ text, focus }: { text: string; focus?: string }) {
+  const start = focus ? text.indexOf(focus) : -1;
+  if (!focus || start === -1) return text;
+  const sentenceStart = text.lastIndexOf("。", start) + 1;
+  const sentenceEnd = text.indexOf("。", start + focus.length);
+  return (
+    <>
+      {text.slice(sentenceStart, start)}
+      <mark>{focus}</mark>
+      {text.slice(start + focus.length, sentenceEnd === -1 ? undefined : sentenceEnd + 1)}
+    </>
+  );
+}
+
+function PracticePreview({
+  sample,
+  onSampleChange,
+}: {
+  sample: (typeof samples)[number];
+  onSampleChange: (id: string) => void;
+}) {
+  const [index, setIndex] = useState(1);
+  const dimension = dimensions[index];
+  const question =
+    sample.id === "booking" && index === 1
+      ? "两个请求同时查到“空闲”，最后谁保证只有一笔预约？"
+      : sampleQuestionFor(sample.id, index);
+
+  return (
+    <article className="probe-preview" aria-labelledby="probe-preview-title">
+      <div className="probe-preview-head">
+        <h2 id="probe-preview-title">练习预览</h2>
+        <select
+          className="probe-sample-select"
+          aria-label="切换示例项目"
+          value={sample.id}
+          onChange={(event) => onSampleChange(event.target.value)}
+        >
+          {samples.map((item) => (
+            <option key={item.id} value={item.id}>{item.project.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="probe-preview-body">
+        <div className="probe-preview-rounds" role="group" aria-label="追问维度">
+          {dimensions.map((item, i) => (
+            <button
+              type="button"
+              key={item.field}
+              aria-pressed={index === i}
+              onClick={() => setIndex(i)}
+            >
+              <span aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+              {dimensionNames[i]}
+            </button>
+          ))}
+        </div>
+        <div className="probe-preview-content" aria-live="polite">
+          <div>
+            <p className="probe-source-label">材料原文 · {dimension.label}</p>
+            <blockquote className="probe-source">
+              <MaterialExcerpt
+                text={sample.project[dimension.field]}
+                focus={index === 1 ? scenarioMeta[sample.id].implementationFocus : undefined}
+              />
+            </blockquote>
+          </div>
+          <div className="probe-question">
+            <div className="probe-question-meta">
+              <strong>{dimension.title}</strong>
+              <span>{String(index + 1).padStart(2, "0")} / {String(dimensions.length).padStart(2, "0")}</span>
+            </div>
+            <h3>{question}</h3>
+            <p>{dimension.task}</p>
+          </div>
+        </div>
+      </div>
+      <div className="probe-preview-foot">
+        <span>规则示例 · 追问可核对原文</span>
+        <div className="probe-preview-paging" role="group" aria-label="切换示例问题">
+          <button type="button" aria-label="上一问" disabled={index === 0} onClick={() => setIndex(index - 1)}>
+            <ArrowLeft size={16} aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="下一问" disabled={index === dimensions.length - 1} onClick={() => setIndex(index + 1)}>
+            <ArrowRight size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
 
 export function Home({
   onStart,
@@ -19,158 +126,55 @@ export function Home({
   onStart: () => void;
   backendReady: boolean;
 }) {
+  const [selected, setSelected] = useState(samples[0].id);
+  const sample = samples.find((item) => item.id === selected) ?? samples[0];
+
   return (
     <div className="competition-home">
-      <section className="probe-hero">
-        <div className="probe-hero-copy">
-          <div className="probe-eyebrow">
-            <span /> 从项目材料出发的面试练习
-          </div>
-          <h1>
-            做过的项目，
-            <br />
-            经得起<span>下一问。</span>
-          </h1>
-          <p>
-            从“我做过”到“我讲得清”。围绕你的职责、实现与取舍连续追问，把需要补充的地方，落回原回答和项目材料。
-          </p>
-          <div className="probe-hero-actions">
-            <button className="button" onClick={() => go("/experience?mode=quick")}>
-              免登录体验追问 <ArrowRight size={17} />
-            </button>
-            <button
-              className="probe-text-button"
-              onClick={onStart}
-              disabled={!backendReady}
-            >
-              用我的项目训练 <ArrowRight size={16} />
-            </button>
-          </div>
-          <div className="probe-hero-note">
-            <ShieldCheck size={14} /> 示例在浏览器内运行，不上传你的回答
-          </div>
-          <a className="probe-text-button" href="#/experience">免登录体验五轮</a>
-          {!backendReady && (
-            <small>当前可体验示例；自有项目训练需连接后端服务。</small>
-          )}
-          <a
-            className="probe-scroll"
-            href="#how-it-works"
-            onClick={(e) => {
-              e.preventDefault();
-              document
-                .getElementById("how-it-works")
-                ?.scrollIntoView({ behavior: "smooth" });
-            }}
-          >
-            <ArrowDown size={15} /> 看看一次追问如何发生
-          </a>
-        </div>
-        <div className="probe-preview" aria-label="追问流程示意">
-          <div className="probe-preview-top">
-            <span>
-              <span className="probe-live-dot" /> 一次有依据的追问
-            </span>
-            <span>PREVIEW / 02</span>
-          </div>
-          <div className="probe-document">
-            <span>
-              <FileText size={15} /> 项目材料 / 校园预约系统
-            </span>
-            <p>“在数据库中约束同一座位、同一时段的有效预约唯一。”</p>
-            <small>来源：关键实现 · 合成示例</small>
-          </div>
-          <div className="probe-connection">
-            <GitBranch size={16} /> 从材料中的具体实现继续问
-          </div>
-          <div className="probe-question-preview">
-            <div>
-              <span className="probe-avatar">问</span>
-              <strong>项目追问官</strong>
-              <span>实现机制</span>
+      <section className="probe-hero" aria-labelledby="probe-headline">
+        <div className="probe-shell probe-hero-grid">
+          <div className="probe-hero-copy">
+            <p className="probe-hero-label">项目面试练习</p>
+            <h1 id="probe-headline">把项目经历，<br />讲清楚。</h1>
+            <p className="probe-hero-intro">
+              围绕项目原文回答五轮追问。把你负责什么、怎么实现、怎么验证，讲成面试官能听懂的细节。
+            </p>
+            <div className="probe-hero-actions">
+              <a className="button" href={experienceHref(sample.id)}>
+                开始示例练习 <ArrowRight size={16} aria-hidden="true" />
+              </a>
+              <button className="button secondary" type="button" onClick={onStart} disabled={!backendReady}>
+                用我的项目练习
+              </button>
             </div>
-            <h2>
-              两个请求同时查到“空闲”，
-              <br />
-              最后由谁保证只有一笔预约？
-            </h2>
-            <p>把术语展开成执行顺序，讲清约束在哪里生效。</p>
+            <div className="probe-hero-note">
+              <span>免登录 · 示例回答仅在浏览器内处理</span>
+              <a href="#/experience?mode=quick">免登录体验追问</a>
+            </div>
+            {!backendReady && <p className="probe-backend-note">自有项目练习需连接服务。</p>}
           </div>
-          <div className="probe-preview-bottom">
-            <Check size={15} /> 有原文可核对 <span /> 没做过，可以直接说明
-          </div>
+          <PracticePreview sample={sample} onSampleChange={setSelected} />
         </div>
       </section>
-      <section className="probe-method" id="how-it-works">
-        <div className="probe-section-heading">
-          <div>
-            <div className="probe-eyebrow">把一次练习，变成下一步行动</div>
-            <h2>材料 → 追问 → 证据复盘</h2>
-          </div>
-          <p>每一步都围绕你的实际项目。</p>
-        </div>
-        <div className="probe-method-grid">
-          {[
-            {
-              icon: FileText,
-              title: "先说清，自己做了什么",
-              text: "整理简历、README 与个人职责。让问题从具体材料出发，也保留尚未验证的边界。",
-            },
-            {
-              icon: GitBranch,
-              title: "顺着回答，再往下问",
-              text: "从实现走向并发、失败与取舍。示例按五个维度练习，真实模型模式结合你的回答追问。",
-            },
-            {
-              icon: BookOpen,
-              title: "回到原文，补上缺口",
-              text: "保留问题、原回答和引用依据。写下补充任务，让下一次练习有所准备。",
-            },
-          ].map((item, i) => (
-            <article key={item.title}>
-              <span className="probe-step">0{i + 1}</span>
-              <item.icon size={25} strokeWidth={1.5} />
-              <h3>{item.title}</h3>
-              <p>{item.text}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="probe-samples">
-        <div className="probe-section-heading">
-          <div>
-            <div className="probe-eyebrow">先试一个熟悉的场景</div>
-            <h2>你会怎样回答下一问？</h2>
-          </div>
-          <span className="probe-label">合成材料 · 本地规则演示</span>
-        </div>
+
+      <section className="probe-shell probe-library" aria-labelledby="probe-library-title">
+        <h2 id="probe-library-title">选一个示例项目</h2>
+        <p>练完可以对照项目材料，回看每道问题和你的原回答。</p>
         <div className="probe-sample-grid">
-          {samples.map((sample, index) => (
-            <a key={sample.id} href={`#/experience?sample=${sample.id}`}>
-              <span className="probe-sample-number">
-                0{index + 1} <ArrowRight size={18} />
-              </span>
-              <span className="probe-label">{sample.label}</span>
-              <h3>{sample.project.name}</h3>
-              <p>{sample.project.problems}</p>
-              <span className="probe-sample-link">
-                带着这个问题，练五轮 <ArrowRight size={14} />
-              </span>
-            </a>
-          ))}
+          {samples.map((item) => {
+            const { icon: Icon, description } = scenarioMeta[item.id];
+            return (
+              <a key={item.id} className="probe-sample-card" href={experienceHref(item.id)}>
+                <span className="probe-sample-icon"><Icon size={18} aria-hidden="true" /></span>
+                <span className="probe-sample-copy">
+                  <strong>{item.project.name}</strong>
+                  <small>{description}</small>
+                </span>
+                <ArrowRight className="probe-sample-arrow" size={16} aria-hidden="true" />
+              </a>
+            );
+          })}
         </div>
-      </section>
-      <section className="probe-closing">
-        <Quote size={27} strokeWidth={1.5} />
-        <h2>
-          讲清楚一个真实细节，
-          <br />
-          比背熟十个术语更进一步。
-        </h2>
-        <button className="button" onClick={() => go("/experience")}>
-          开始我的第一轮 <ArrowRight size={17} />
-        </button>
-        <p>不生成虚构经历，不承诺面试或录用结果。</p>
       </section>
     </div>
   );
