@@ -8,8 +8,10 @@ test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", as
     route.fulfill({ status: 503, json: { message: "测试：后端离线" } }),
   );
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /做过的项目/ })).toBeVisible();
-  await page.getByRole("link", { name: "免登录体验五轮" }).click();
+  await expect(
+    page.getByRole("heading", { name: /把项目经历[，,]\s*讲清楚/ }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
   await page.getByRole("button", { name: "开始五轮练习" }).click();
   await page.getByLabel("本轮回答").fill("第一轮草稿：我负责预约接口。");
   await page.reload();

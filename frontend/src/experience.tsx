@@ -2,13 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  CalendarClock,
   Check,
   CheckCheck,
   ChevronDown,
+  Database,
   Download,
   FileText,
   RotateCcw,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { go } from "./api";
 import {
@@ -22,6 +25,15 @@ import {
 } from "./experience-data";
 import "./competition.css";
 import { QuickExperience } from "./quick-experience";
+
+const scenarioMeta: Record<
+  string,
+  { icon: typeof Database; tone: string; level: string }
+> = {
+  booking: { icon: Database, tone: "blue", level: "入门 · 并发与一致性" },
+  rag: { icon: Sparkles, tone: "teal", level: "进阶 · 检索与引用" },
+  scheduler: { icon: CalendarClock, tone: "amber", level: "进阶 · 幂等与重试" },
+};
 
 export function ExperiencePage() {
   const params = new URLSearchParams(location.hash.split("?")[1]);
@@ -92,11 +104,13 @@ function FullExperience() {
       {storageError && <p role="alert">{storageError}</p>}
       {!state.started ? (
         <div className="experience-intro">
-          <div className="probe-eyebrow">五轮，练清楚一个项目</div>
+          <div className="probe-eyebrow">
+            <span /> 五轮，练清楚一个项目
+          </div>
           <h1>
             选择一个场景，
             <br />
-            开始你的下一问。
+            开始你的<span>下一问。</span>
           </h1>
           <p>
             以下都是合成项目。你可以代入实现者作答，也可以直接说明“不确定”。
@@ -104,24 +118,45 @@ function FullExperience() {
             示例按固定维度追问，最终保留原文与自查清单，不对技术正确性评分。
           </p>
           <div className="experience-options">
-            {samples.map((s) => (
-              <button
-                key={s.id}
-                aria-pressed={state.sample === s.id}
-                onClick={() => setState(freshExperience(s.id))}
-              >
-                <span>
-                  {s.label}
-                  {state.sample === s.id && <Check size={16} />}
-                </span>
-                <h2>{s.project.name}</h2>
-                <p>{s.project.stack}</p>
-              </button>
-            ))}
+            {samples.map((s, i) => {
+              const meta = scenarioMeta[s.id];
+              const Icon = meta.icon;
+              const selected = state.sample === s.id;
+              return (
+                <button
+                  key={s.id}
+                  className={`experience-option tone-${meta.tone}`}
+                  aria-pressed={selected}
+                  onClick={() => setState(freshExperience(s.id))}
+                >
+                  <span className="experience-option-head">
+                    <span className="experience-option-icon">
+                      <Icon size={22} strokeWidth={1.7} />
+                    </span>
+                    <span className="experience-option-check" aria-hidden>
+                      {selected ? <Check size={15} /> : `0${i + 1}`}
+                    </span>
+                  </span>
+                  <span className="experience-option-tag">{s.label}</span>
+                  <h2>{s.project.name}</h2>
+                  <span className="experience-option-stack">
+                    {s.project.stack}
+                  </span>
+                  <p>{s.project.problems}</p>
+                  <span className="experience-option-foot">
+                    <span>{meta.level}</span>
+                    <span className="experience-option-pick">
+                      {selected ? "已选择" : "选择此场景"}
+                      <ArrowRight size={14} />
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <div className="experience-intro-actions">
             <button
-              className="button"
+              className="button button-lg"
               onClick={() => setState((s) => ({ ...s, started: true }))}
             >
               开始五轮练习 <ArrowRight size={17} />

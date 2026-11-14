@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("免登录短体验随初答改变追问，并区分补充细节和实际验证", async ({ page }) => {
   await page.route("**/api/**", route => route.abort());
   await page.goto("/");
-  await page.getByRole("button", { name: "免登录体验追问" }).click();
+  await page.getByRole("main").getByRole("link", { name: "免登录体验追问", exact: true }).click();
 
   await page.getByRole("button", { name: "示例：只讲约束" }).click();
   await page.getByRole("button", { name: "看下一问" }).click();
