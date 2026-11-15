@@ -52,6 +52,11 @@ body {
   min-width: 0;
 }
 
+#root:has(> .site-header--public-home) > main {
+  display: flex;
+  flex-direction: column;
+}
+
 .app-main {
   background: var(--bg);
 }
