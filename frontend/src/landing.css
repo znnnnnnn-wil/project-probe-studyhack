@@ -1,5 +1,8 @@
 .competition-home {
   color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 .probe-shell {
@@ -278,6 +281,9 @@
 
 .probe-library {
   padding-block: 37px 43px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .probe-library h2 {
@@ -298,6 +304,7 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 18px;
+  flex: 1;
 }
 
 .probe-sample-card {
@@ -344,6 +351,41 @@
 
 .probe-sample-arrow {
   color: var(--blue);
+}
+
+@media (min-width: 861px) {
+  .probe-sample-grid {
+    grid-template-rows: 1fr;
+  }
+  .probe-sample-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 26px 24px;
+  }
+  .probe-sample-icon {
+    width: 52px;
+    height: 52px;
+  }
+  .probe-sample-icon svg {
+    width: 24px;
+    height: 24px;
+  }
+  .probe-sample-copy {
+    flex: 1;
+    align-content: center;
+    gap: 6px;
+  }
+  .probe-sample-copy strong {
+    font-size: 19px;
+  }
+  .probe-sample-copy small {
+    font-size: 13px;
+  }
+  .probe-sample-arrow {
+    align-self: flex-end;
+  }
 }
 
 @media (max-width: 1130px) {
