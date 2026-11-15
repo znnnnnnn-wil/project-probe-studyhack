@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Mic, Square, X, LoaderCircle, Plus, AudioLines, Check } from "lucide-react";
 import type { VoiceActivity } from "./voice-activity";
+import "./experience-voice.css";
 interface SpeechResultLike {
   isFinal: boolean;
   0: { transcript: string };

@@ -9,6 +9,7 @@ import { PracticeReview } from "./practice-review";
 import type { Project } from "./types";
 import { EvidenceReview } from "./evidence-review";
 import { PracticeRetest } from "./practice-retest";
+import { ExperienceVoice } from "./experience-voice";
 import "./experience-report.css";
 
 export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, busy }: Actions & {
@@ -16,10 +17,11 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
 }) {
   const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, accept } = useProjectPractice(projectId);
   const [expanded, setExpanded] = useState(true);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const turn = value.turns?.at(-1);
   const multi = (value.maxTurns || 1) > 1;
   const waiting = pending || ["LOADING", "GENERATING"].includes(value.status);
-  const action = <Button disabled={busy || (!loadError && (disabled || waiting || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
+  const action = <Button disabled={busy || voiceBusy || (!loadError && (disabled || waiting || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
     setExpanded(true); if (loadError) void load(); else void run(submit);
   }}>
     {loadError ? "重新读取体验状态" : value.status === "LOADING" ? "正在读取…" : pending || value.status === "GENERATING" ? "正在生成，自动恢复进度…" : value.status === "ACTIVE" ? "提交体验回答" : value.status === "AVAILABLE" ? (multi ? "开始五轮训练" : "开始一题体验") : "重试或恢复体验"}<ArrowRight size={16} />
@@ -65,7 +67,14 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
         </div>
         {!value.report && <div className="practice-answer"><label>体验回答
           <textarea aria-label="体验回答" rows={6} maxLength={3000} disabled={busy || disabled || waiting || loadError || submitted} value={answer} onChange={e => edit(e.target.value)} placeholder="从你的职责、具体实现和验证方式说起…" />
-        </label><div className="practice-answer-actions"><small>{answer.length} / 3000</small>{action}</div></div>}
+        </label>
+        <ExperienceVoice
+          disabled={busy || disabled || waiting || loadError || submitted}
+          remaining={3000 - answer.length - (answer.trim() ? 1 : 0)}
+          onBusy={setVoiceBusy}
+          onAppend={text => edit((answer + (answer.trim() ? "\n" : "") + text).slice(0, 3000))}
+        />
+        <div className="practice-answer-actions"><small>{answer.length} / 3000</small>{action}</div></div>}
       </div>}
       {value.report && <div className="practice-feedback"><h3>针对你的回答</h3>
         <Button secondary onClick={exportPractice}><Download size={15} />导出本轮复盘</Button>
