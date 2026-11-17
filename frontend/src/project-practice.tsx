@@ -12,6 +12,7 @@ import { PracticeRetest } from "./practice-retest";
 import { ExperienceVoice } from "./experience-voice";
 import { InterviewerAvatar } from "./interviewer-avatar";
 import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
+import { api } from "./api";
 import "./experience-report.css";
 
 export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, busy }: Actions & {
@@ -21,7 +22,15 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
   const [expanded, setExpanded] = useState(true);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [sound, setSound] = useState(true);
-  const { speaking, speak, stop, supported: speechSupported } = useQuestionSpeech();
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    api<{ ttsEnabled?: boolean }>("/config")
+      .then(config => { if (mounted) setTtsEnabled(!!config.ttsEnabled); })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+  const { speaking, speak, stop, supported: speechSupported, mouthLevel } = useQuestionSpeech(ttsEnabled);
   const camera = useCameraPreview();
   const turn = value.turns?.at(-1);
   const multi = (value.maxTurns || 1) > 1;
@@ -31,10 +40,10 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
   const questionId = turn?.id;
   const questionText = turn?.question || "";
   useEffect(() => {
-    if (!stageVisible || !sound || waiting) { stop(); return; }
-    speak(questionText);
+    if (!stageVisible || !sound || waiting || !questionId) { stop(); return; }
+    speak(questionText, { projectId, turnId: questionId });
     return stop;
-  }, [questionId, questionText, stageVisible, sound, waiting, speak, stop]);
+  }, [projectId, questionId, questionText, stageVisible, sound, waiting, speak, stop]);
   useEffect(() => {
     if (!stageVisible) camera.stop();
   }, [stageVisible, camera.stop]);
@@ -81,7 +90,7 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
       {turn && <div className={"practice-body" + (value.report ? " is-completed" : stageVisible ? " is-live" : "")}>
         {stageVisible && <div className="practice-stage-col">
           <div className="live-stage">
-            <InterviewerAvatar state={avatarState} />
+            <InterviewerAvatar state={avatarState} mouthLevel={mouthLevel} />
             <div className="stage-top">
               <span className="live-indicator"><span className="status-dot" />{avatarStatus}</span>
               <span className="live-indicator">项目追问 · 中文</span>
@@ -102,7 +111,7 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
               aria-label={sound ? "关闭面试官声音" : "开启面试官声音"} title={sound ? "关闭面试官声音" : "开启面试官声音"}
               onClick={() => setSound(!sound)}>{sound ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
             <button type="button" className="round-control" aria-label="重新播报本题" title="重新播报本题"
-              disabled={!speechSupported || !sound || speaking || waiting} onClick={() => speak(turn.question)}><RotateCcw size={18} /></button>
+              disabled={!speechSupported || !sound || speaking || waiting} onClick={() => speak(turn.question, { projectId, turnId: turn.id })}><RotateCcw size={18} /></button>
             <button type="button" className="round-control" aria-pressed={camera.on}
               aria-label={camera.on ? "关闭摄像头" : "开启摄像头"} title={camera.on ? "关闭摄像头" : "开启摄像头"}
               onClick={() => void camera.toggle()}>{camera.on ? <Camera size={19} /> : <CameraOff size={19} />}</button>

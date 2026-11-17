@@ -9,13 +9,17 @@ const MODEL_URL = "/models/interviewer.glb";
 export function InterviewerAvatar({
   state = "idle",
   label = "3D 面试官陈老师",
+  mouthLevel,
 }: {
   state?: AvatarState;
   label?: string;
+  mouthLevel?: { current: number };
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const levelRef = useRef(mouthLevel);
+  levelRef.current = mouthLevel;
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -210,13 +214,24 @@ export function InterviewerAvatar({
           morph("eyeBlinkLeft", blink);
           morph("eyeBlinkRight", blink);
         }
+        const levelSource = levelRef.current;
+        const audioDriven = !!levelSource && levelSource.current >= 0;
         const mouth = speaking
-          ? Math.max(0, Math.sin(time * 19)) * 0.22 +
-            Math.max(0, Math.sin(time * 11)) * 0.12
+          ? audioDriven
+            ? Math.min(1, Math.max(0, levelSource!.current)) * 0.55
+            : Math.max(0, Math.sin(time * 19)) * 0.22 +
+              Math.max(0, Math.sin(time * 11)) * 0.12
           : 0;
         morph("jawOpen", mouth * 0.65);
         morph("viseme_aa", mouth);
-        morph("viseme_O", speaking ? Math.max(0, Math.sin(time * 8)) * 0.12 : 0);
+        morph(
+          "viseme_O",
+          speaking
+            ? audioDriven
+              ? mouth * 0.35
+              : Math.max(0, Math.sin(time * 8)) * 0.12
+            : 0,
+        );
         renderer.render(scene, camera);
       };
       animate();
