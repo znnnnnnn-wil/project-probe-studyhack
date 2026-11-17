@@ -4,6 +4,7 @@ import { api } from "./api";
 import { Button } from "./ui";
 import type { Actions } from "./ui";
 import { RecoverLogin } from "./account";
+import { InterviewerAvatar } from "./interviewer-avatar";
 export function Login({
   run,
   busy,
@@ -16,18 +17,19 @@ export function Login({
   if (recover) return <section className="page"><RecoverLogin run={run} busy={busy} onBack={() => { setRecover(false); setRegister(false); }} /></section>;
   return (
     <section className="auth-layout">
-      <div>
-        <div className="eyebrow">从你的项目开始</div>
-        <h1>
-          给下一次面试，
-          <br />
-          <span>多一点准备。</span>
-        </h1>
-        <p>
-          注册后，项目材料、回答和复盘将保存在服务端。
-          <br />
-          请使用合成或脱敏材料，不要填写密钥、手机号等敏感信息。
-        </p>
+      <div className="auth-stage">
+        <InterviewerAvatar />
+        <span className="auth-stage-brand">
+          <span className="brand-icon" aria-hidden="true">问</span>
+          项目追问官
+        </span>
+        <div className="auth-caption">
+          <h1>面对面，练习讲清你的项目。</h1>
+          <p>
+            注册后，项目材料、回答和复盘将保存在服务端。
+            请使用合成或脱敏材料，不要填写密钥、手机号等敏感信息。
+          </p>
+        </div>
       </div>
       <form
         className="panel"
