@@ -55,6 +55,14 @@ app:
   speech-url: ${SPEECH_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
   speech-key: ${SPEECH_API_KEY:}
   speech-daily-limit: ${SPEECH_DAILY_LIMIT:20}
+  tts-enabled: ${TTS_ENABLED:false}
+  tts-paid-allowed: ${TTS_PAID_ALLOWED:false}
+  tts-free-quota-confirmed-model: ${TTS_FREE_QUOTA_CONFIRMED_MODEL:}
+  tts-model: ${TTS_MODEL:cosyvoice-v2}
+  tts-voice: ${TTS_VOICE:longcheng_v2}
+  tts-url: ${TTS_BASE_URL:wss://dashscope.aliyuncs.com/api-ws/v1/inference}
+  tts-key: ${TTS_API_KEY:}
+  tts-daily-limit: ${TTS_DAILY_LIMIT:60}
   payment-mode: ${PAYMENT_MODE:mock}
   payment:
     mode: ${PAYMENT_MODE:mock}
