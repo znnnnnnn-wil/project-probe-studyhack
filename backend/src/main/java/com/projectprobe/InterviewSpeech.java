@@ -1,0 +1,230 @@
+package com.projectprobe;
+
+import static com.projectprobe.Store.*;
+
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.ByteArrayOutputStream;
+import java.net.URI;
+import java.net.http.*;
+import java.nio.ByteBuffer;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service
+public class InterviewSpeech {
+
+  final Store s;
+  final ModelService model;
+  final InputService inputs;
+  final ProjectService projects;
+  final HttpClient client = HttpClient.newBuilder()
+    .connectTimeout(Duration.ofSeconds(8))
+    .build();
+
+  @Value("${app.tts-enabled:false}")
+  boolean enabled;
+
+  @Value("${app.tts-paid-allowed:false}")
+  boolean paidAllowed;
+
+  @Value("${app.tts-free-quota-confirmed-model:}")
+  String confirmedModel;
+
+  @Value("${app.tts-model:cosyvoice-v2}")
+  String ttsModel;
+
+  @Value("${app.tts-voice:longcheng_v2}")
+  String voice;
+
+  @Value("${app.tts-url:wss://dashscope.aliyuncs.com/api-ws/v1/inference}")
+  String ttsUrl;
+
+  @Value("${app.tts-key:}")
+  String ttsKey;
+
+  @Value("${app.tts-daily-limit:60}")
+  int dailyLimit;
+
+  InterviewSpeech(Store s, ModelService model, InputService inputs, ProjectService projects) {
+    this.s = s;
+    this.model = model;
+    this.inputs = inputs;
+    this.projects = projects;
+  }
+
+  String key() {
+    return ttsKey.isBlank()
+      ? "DashScope".equalsIgnoreCase(model.provider) ? model.key : ""
+      : ttsKey;
+  }
+
+  boolean ttsReady() {
+    String host;
+    try {
+      host = URI.create(ttsUrl).getHost();
+    } catch (Exception e) {
+      return false;
+    }
+    return (
+      enabled &&
+      (paidAllowed || ttsModel.equals(confirmedModel)) &&
+      ttsUrl.startsWith("wss://") &&
+      ("dashscope.aliyuncs.com".equals(host) ||
+        (host != null && host.endsWith(".cn-beijing.maas.aliyuncs.com"))) &&
+      !key().isBlank()
+    );
+  }
+
+  void speak(String user, String projectId, String turnId, HttpServletResponse response) {
+    if (!ttsReady()) throw error(503, "面试官语音暂未配置，将使用浏览器播报");
+    projects.get(user, projectId);
+    var rows = s.db.queryForList("SELECT * FROM project_trials WHERE user_id=?", user);
+    if (rows.isEmpty()) throw error(409, "当前没有进行中的训练，请先开始训练");
+    var row = rows.get(0);
+    if (!projectId.equals(row.get("project_id")) || !"ACTIVE".equals(row.get("status")))
+      throw error(409, "本题已结束，请重新加载当前问题");
+    var turns = list(s.decode(row.get("body")), "turns");
+    if (turns.isEmpty()) throw error(409, "本题已结束，请重新加载当前问题");
+    var turn = turns.get(turns.size() - 1);
+    if (!str(turn, "id").equals(turnId) || !str(turn, "answer").isBlank())
+      throw error(409, "本题已结束，请重新加载当前问题");
+    String text = str(turn, "question");
+    if (text.isBlank() || text.length() > 300) throw error(409, "当前问题不支持语音播报");
+    inputs.limited(user, "TTS", Math.max(1, Math.min(dailyLimit, 200)), () -> {
+      synthesize(text, response);
+      return Boolean.TRUE;
+    });
+  }
+
+  void synthesize(String text, HttpServletResponse response) {
+    String taskId = UUID.randomUUID().toString();
+    var audio = new LinkedBlockingQueue<byte[]>();
+    var failure = new AtomicReference<String>();
+    var finished = new CountDownLatch(1);
+    String runTask = s.encode(Map.of(
+      "header", Map.of("action", "run-task", "task_id", taskId, "streaming", "duplex"),
+      "payload", Map.of(
+        "task_group", "audio", "task", "tts", "function", "SpeechSynthesizer",
+        "model", ttsModel,
+        "parameters", Map.of(
+          "text_type", "PlainText", "voice", voice, "format", "mp3",
+          "sample_rate", 22050, "volume", 50, "rate", 1.0, "pitch", 1.0
+        ),
+        "input", Map.of()
+      )
+    ));
+    String continueTask = s.encode(Map.of(
+      "header", Map.of("action", "continue-task", "task_id", taskId),
+      "payload", Map.of("input", Map.of("text", text))
+    ));
+    String finishTask = s.encode(Map.of(
+      "header", Map.of("action", "finish-task", "task_id", taskId),
+      "payload", Map.of("input", Map.of())
+    ));
+    WebSocket.Listener listener = new WebSocket.Listener() {
+      final StringBuilder textBuffer = new StringBuilder();
+      final ByteArrayOutputStream partial = new ByteArrayOutputStream();
+
+      @Override
+      public void onOpen(WebSocket ws) {
+        ws.sendText(runTask, true);
+        ws.request(1);
+      }
+
+      @Override
+      public CompletionStage<?> onText(WebSocket ws, CharSequence data, boolean last) {
+        textBuffer.append(data);
+        if (last) {
+          String message = textBuffer.toString();
+          textBuffer.setLength(0);
+          try {
+            var header = s.json.readTree(message).path("header");
+            String event = header.path("event").asText("");
+            if (event.equals("task-started")) {
+              ws.sendText(continueTask, true).thenCompose(ignored -> ws.sendText(finishTask, true));
+            } else if (event.equals("task-failed")) {
+              failure.compareAndSet(null, header.path("error_message").asText("语音合成失败"));
+              finished.countDown();
+            } else if (event.equals("task-finished")) {
+              finished.countDown();
+            }
+          } catch (Exception e) {
+            failure.compareAndSet(null, "语音服务响应异常");
+            finished.countDown();
+          }
+        }
+        ws.request(1);
+        return null;
+      }
+
+      @Override
+      public CompletionStage<?> onBinary(WebSocket ws, ByteBuffer data, boolean last) {
+        byte[] bytes = new byte[data.remaining()];
+        data.get(bytes);
+        partial.writeBytes(bytes);
+        if (last) {
+          audio.add(partial.toByteArray());
+          partial.reset();
+        }
+        ws.request(1);
+        return null;
+      }
+
+      @Override
+      public CompletionStage<?> onClose(WebSocket ws, int statusCode, String reason) {
+        finished.countDown();
+        return null;
+      }
+
+      @Override
+      public void onError(WebSocket ws, Throwable error) {
+        failure.compareAndSet(null, "语音连接异常");
+        finished.countDown();
+      }
+    };
+    WebSocket ws = null;
+    try {
+      ws = client.newWebSocketBuilder()
+        .header("Authorization", "Bearer " + key())
+        .connectTimeout(Duration.ofSeconds(8))
+        .buildAsync(URI.create(ttsUrl), listener)
+        .join();
+      byte[] first = null;
+      long deadline = now() + 20000;
+      while (first == null) {
+        if (failure.get() != null) throw error(503, "面试官语音暂不可用，将使用浏览器播报");
+        long remaining = deadline - now();
+        if (remaining <= 0) throw error(503, "面试官语音响应超时，将使用浏览器播报");
+        first = audio.poll(remaining, TimeUnit.MILLISECONDS);
+        if (first == null && finished.getCount() == 0)
+          throw error(503, "面试官语音暂不可用，将使用浏览器播报");
+      }
+      response.setContentType("audio/mpeg");
+      response.setHeader("Cache-Control", "no-store");
+      var out = response.getOutputStream();
+      out.write(first);
+      out.flush();
+      long end = now() + 60000;
+      while (failure.get() == null) {
+        byte[] chunk = audio.poll(1000, TimeUnit.MILLISECONDS);
+        if (chunk != null) {
+          out.write(chunk);
+          out.flush();
+        } else if (finished.getCount() == 0 || now() >= end) break;
+      }
+    } catch (org.springframework.web.server.ResponseStatusException e) {
+      throw e;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw error(503, "语音合成已中断，将使用浏览器播报");
+    } catch (Exception e) {
+      throw error(503, "面试官语音暂不可用，将使用浏览器播报");
+    } finally {
+      if (ws != null) ws.abort();
+    }
+  }
+}

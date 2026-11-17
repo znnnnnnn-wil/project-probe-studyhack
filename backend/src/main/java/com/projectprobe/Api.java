@@ -18,6 +18,7 @@ public class Api {
   final InputService inputs;
   final TrainingSupport support;
   final AnswerDrafts drafts;
+  final InterviewSpeech speech;
 
   Api(
     Store s,
@@ -29,7 +30,8 @@ public class Api {
     PaymentOperations paymentOperations,
     InputService inputs,
     TrainingSupport support,
-    AnswerDrafts drafts
+    AnswerDrafts drafts,
+    InterviewSpeech speech
   ) {
     this.s = s;
     this.auth = auth;
@@ -41,6 +43,7 @@ public class Api {
     this.inputs = inputs;
     this.support = support;
     this.drafts = drafts;
+    this.speech = speech;
   }
 
   @GetMapping("/health")
@@ -73,6 +76,8 @@ public class Api {
       payments.configured(),
       "speechEnabled",
       inputs.speechReady(),
+      "ttsEnabled",
+      speech.ttsReady(),
       "resumeImportEnabled",
       model.mode.equals("live")
     );
