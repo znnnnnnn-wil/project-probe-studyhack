@@ -2,6 +2,13 @@
 MakeHuman / MPFB system assets (CC0), TalkingHead rig (MIT).
 See https://github.com/seehiong/ai-avatar/blob/main/THIRD_PARTY_NOTICES.md
 
+MediaPipe Tasks Vision (@mediapipe/tasks-vision 1.2.3) and the Face Landmarker
+model (face_landmarker.task) are Copyright The MediaPipe Authors, licensed
+under the Apache License, Version 2.0. You may obtain a copy of the License at
+https://www.apache.org/licenses/LICENSE-2.0
+Model source: https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+Camera frames are processed on-device only and are never uploaded.
+
 The MIT License
 
 Copyright © 2010-2024 three.js authors

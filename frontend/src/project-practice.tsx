@@ -12,6 +12,7 @@ import { PracticeRetest } from "./practice-retest";
 import { ExperienceVoice } from "./experience-voice";
 import { InterviewerAvatar } from "./interviewer-avatar";
 import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
+import { useFacePresence } from "./use-face-presence";
 import { api } from "./api";
 import "./experience-report.css";
 
@@ -32,6 +33,7 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
   }, []);
   const { speaking, speak, stop, supported: speechSupported, mouthLevel } = useQuestionSpeech(ttsEnabled);
   const camera = useCameraPreview();
+  const { presence, snapshot: face } = useFacePresence(camera.on ? camera.stream : null);
   const turn = value.turns?.at(-1);
   const multi = (value.maxTurns || 1) > 1;
   const waiting = pending || ["LOADING", "GENERATING"].includes(value.status);
@@ -47,8 +49,9 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
   useEffect(() => {
     if (!stageVisible) camera.stop();
   }, [stageVisible, camera.stop]);
-  const avatarState = speaking ? "speaking" : voiceBusy ? "listening" : "idle";
-  const avatarStatus = speaking ? "面试官正在提问" : voiceBusy ? "正在听你的回答" : "等待你的回答";
+  const listening = voiceBusy || face.speaking;
+  const avatarState = speaking ? "speaking" : listening ? "listening" : "idle";
+  const avatarStatus = speaking ? "面试官正在提问" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
   const action = <Button disabled={busy || voiceBusy || (!loadError && (disabled || waiting || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
     setExpanded(true); if (loadError) void load(); else void run(submit);
   }}>
@@ -90,7 +93,7 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
       {turn && <div className={"practice-body" + (value.report ? " is-completed" : stageVisible ? " is-live" : "")}>
         {stageVisible && <div className="practice-stage-col">
           <div className="live-stage">
-            <InterviewerAvatar state={avatarState} mouthLevel={mouthLevel} />
+            <InterviewerAvatar state={avatarState} mouthLevel={mouthLevel} presence={presence} />
             <div className="stage-top">
               <span className="live-indicator"><span className="status-dot" />{avatarStatus}</span>
               <span className="live-indicator">项目追问 · 中文</span>
@@ -118,7 +121,7 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
           </div>
           {camera.error && <p className="media-error" role="status">{camera.error}</p>}
           {!speechSupported && <p className="media-error" role="status">当前浏览器不支持语音播报，可继续文字训练。</p>}
-          <p className="control-caption">麦克风在回答区开启；摄像头仅本机预览，不上传。</p>
+          <p className="control-caption">麦克风在回答区开启；摄像头仅本机预览与本地动作识别，画面不上传。</p>
         </div>}
         <div className="practice-live-right">
         <div className="practice-question"><span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
