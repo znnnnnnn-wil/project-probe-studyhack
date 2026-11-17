@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Button } from "./ui";
 import type { Actions } from "./ui";
 import { useProjectPractice } from "./use-project-practice";
-import { ArrowRight, Check, ChevronDown, ChevronUp, Download, MessageSquare, Sparkles } from "lucide-react";
+import { ArrowRight, Camera, CameraOff, Check, ChevronDown, ChevronUp, Download, MessageSquare, RotateCcw, Sparkles, Volume2, VolumeX } from "lucide-react";
 import "./project-practice.css";
 import { PracticeNext } from "./practice-next";
 import { PracticeReview } from "./practice-review";
@@ -10,6 +10,8 @@ import type { Project } from "./types";
 import { EvidenceReview } from "./evidence-review";
 import { PracticeRetest } from "./practice-retest";
 import { ExperienceVoice } from "./experience-voice";
+import { InterviewerAvatar } from "./interviewer-avatar";
+import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
 import "./experience-report.css";
 
 export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, busy }: Actions & {
@@ -18,9 +20,26 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
   const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, accept } = useProjectPractice(projectId);
   const [expanded, setExpanded] = useState(true);
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [sound, setSound] = useState(true);
+  const { speaking, speak, stop, supported: speechSupported } = useQuestionSpeech();
+  const camera = useCameraPreview();
   const turn = value.turns?.at(-1);
   const multi = (value.maxTurns || 1) > 1;
   const waiting = pending || ["LOADING", "GENERATING"].includes(value.status);
+  const live = !!turn && !value.report && value.status !== "USED";
+  const stageVisible = live && expanded;
+  const questionId = turn?.id;
+  const questionText = turn?.question || "";
+  useEffect(() => {
+    if (!stageVisible || !sound || waiting) { stop(); return; }
+    speak(questionText);
+    return stop;
+  }, [questionId, questionText, stageVisible, sound, waiting, speak, stop]);
+  useEffect(() => {
+    if (!stageVisible) camera.stop();
+  }, [stageVisible, camera.stop]);
+  const avatarState = speaking ? "speaking" : voiceBusy ? "listening" : "idle";
+  const avatarStatus = speaking ? "面试官正在提问" : voiceBusy ? "正在听你的回答" : "等待你的回答";
   const action = <Button disabled={busy || voiceBusy || (!loadError && (disabled || waiting || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
     setExpanded(true); if (loadError) void load(); else void run(submit);
   }}>
@@ -59,22 +78,60 @@ export function ProjectPractice({ projectId, disabled, onSaved, onReview, run, b
     <div id="practice-content" hidden={!expanded}>
     {value.status === "USED" ? <p className="practice-footnote">本账号已完成免费训练，请回到首次训练的项目查看记录与复盘。</p> : <>
       {(value.turns?.length || 0) > 1 && <details className="practice-footnote"><summary>查看本轮已提交问答（{value.turns!.filter(t => t.answer).length}）</summary>{value.turns!.filter(t => t.answer).map(t => <article key={t.id}><h4>{t.question}</h4><p style={{ whiteSpace: "pre-wrap" }}>{t.answer}</p></article>)}</details>}
-      {turn && <div className={"practice-body" + (value.report ? " is-completed" : "")}>
+      {turn && <div className={"practice-body" + (value.report ? " is-completed" : stageVisible ? " is-live" : "")}>
+        {stageVisible && <div className="practice-stage-col">
+          <div className="live-stage">
+            <InterviewerAvatar state={avatarState} />
+            <div className="stage-top">
+              <span className="live-indicator"><span className="status-dot" />{avatarStatus}</span>
+              <span className="live-indicator">项目追问 · 中文</span>
+            </div>
+            {speaking && <div className="stage-subtitle">{turn.question}</div>}
+            <div className="stage-bottom">
+              <div className="stage-name"><strong>陈老师</strong><p>技术面试官</p></div>
+              <div className="camera-box">
+                {camera.on && camera.stream ? <>
+                  <video autoPlay playsInline muted aria-label="你的摄像头预览" ref={el => { if (el) el.srcObject = camera.stream; }} />
+                  <span className="camera-caption">你</span>
+                </> : <><CameraOff size={18} aria-hidden="true" /><span>你的摄像头尚未开启</span></>}
+              </div>
+            </div>
+          </div>
+          <div className="live-control-bar" role="group" aria-label="训练媒体控件">
+            <button type="button" className="round-control" aria-pressed={sound} disabled={!speechSupported}
+              aria-label={sound ? "关闭面试官声音" : "开启面试官声音"} title={sound ? "关闭面试官声音" : "开启面试官声音"}
+              onClick={() => setSound(!sound)}>{sound ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
+            <button type="button" className="round-control" aria-label="重新播报本题" title="重新播报本题"
+              disabled={!speechSupported || !sound || speaking || waiting} onClick={() => speak(turn.question)}><RotateCcw size={18} /></button>
+            <button type="button" className="round-control" aria-pressed={camera.on}
+              aria-label={camera.on ? "关闭摄像头" : "开启摄像头"} title={camera.on ? "关闭摄像头" : "开启摄像头"}
+              onClick={() => void camera.toggle()}>{camera.on ? <Camera size={19} /> : <CameraOff size={19} />}</button>
+          </div>
+          {camera.error && <p className="media-error" role="status">{camera.error}</p>}
+          {!speechSupported && <p className="media-error" role="status">当前浏览器不支持语音播报，可继续文字训练。</p>}
+          <p className="control-caption">麦克风在回答区开启；摄像头仅本机预览，不上传。</p>
+        </div>}
+        <div className="practice-live-right">
         <div className="practice-question"><span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
           <h3>{turn.question}</h3>
           <p>结合你实际负责的部分回答；没有做过或尚未验证的内容，可以直接说明。</p>
           {value.modelMode && <small>{value.modelMode === "demo" ? "规则演示，非AI评估" : "真实AI反馈，技术建议仍需核对"}</small>}
+          {!value.report && <div className="question-progress-row"><span>第 {value.turns?.length || 1} / {value.maxTurns || 1} 题</span>
+            <div className="question-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, ((value.turns?.length || 1) / (value.maxTurns || 1)) * 100)}%` }} /></div>
+          </div>}
         </div>
         {!value.report && <div className="practice-answer"><label>体验回答
           <textarea aria-label="体验回答" rows={6} maxLength={3000} disabled={busy || disabled || waiting || loadError || submitted} value={answer} onChange={e => edit(e.target.value)} placeholder="从你的职责、具体实现和验证方式说起…" />
         </label>
         <ExperienceVoice
+          key={turn.id}
           disabled={busy || disabled || waiting || loadError || submitted}
           remaining={3000 - answer.length - (answer.trim() ? 1 : 0)}
           onBusy={setVoiceBusy}
           onAppend={text => edit((answer + (answer.trim() ? "\n" : "") + text).slice(0, 3000))}
         />
         <div className="practice-answer-actions"><small>{answer.length} / 3000</small>{action}</div></div>}
+        </div>
       </div>}
       {value.report && <div className="practice-feedback"><h3>针对你的回答</h3>
         <Button secondary onClick={exportPractice}><Download size={15} />导出本轮复盘</Button>
