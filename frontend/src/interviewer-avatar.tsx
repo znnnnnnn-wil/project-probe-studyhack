@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
+import type { FacePresence } from "./use-face-presence";
 import "./interviewer.css";
 
 export type AvatarState = "idle" | "listening" | "speaking";
@@ -10,16 +11,20 @@ export function InterviewerAvatar({
   state = "idle",
   label = "3D 面试官陈老师",
   mouthLevel,
+  presence,
 }: {
   state?: AvatarState;
   label?: string;
   mouthLevel?: { current: number };
+  presence?: { current: FacePresence };
 }) {
   const mount = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
   const levelRef = useRef(mouthLevel);
   levelRef.current = mouthLevel;
+  const presenceRef = useRef(presence);
+  presenceRef.current = presence;
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
@@ -191,20 +196,38 @@ export function InterviewerAvatar({
         previousTime = time;
         const mode = stateRef.current;
         const speaking = mode === "speaking";
+        const seen = presenceRef.current?.current;
+        const engaged = !!seen?.ready && seen.face;
+        const userSpeaking = !!seen?.speaking;
+        const sway = engaged ? 0.35 : 1;
+        let nod = 0;
+        if (seen?.nodAt) {
+          const age = (performance.now() - seen.nodAt) / 1000;
+          if (age >= 0 && age < 0.9)
+            nod = Math.sin((age / 0.9) * Math.PI * 2) * 0.06 * (1 - age / 0.9);
+        }
         if (!reduceMotion) {
           if (head && originalHeadRotation) {
             head.rotation.x =
               originalHeadRotation.x +
-              Math.sin(time * 0.65) * 0.012 +
-              (mode === "listening" ? Math.sin(time * 1.1) * 0.009 : 0);
+              Math.sin(time * 0.65) * 0.012 * sway +
+              (mode === "listening" ? Math.sin(time * 1.1) * 0.009 : 0) +
+              nod +
+              (userSpeaking ? 0.02 : 0);
             head.rotation.y =
-              originalHeadRotation.y + Math.sin(time * 0.38) * 0.024;
+              originalHeadRotation.y +
+              Math.sin(time * 0.38) * 0.024 * sway +
+              (engaged
+                ? Math.max(-0.35, Math.min(0.35, -seen!.yaw)) * 0.12
+                : 0);
             head.rotation.z =
-              originalHeadRotation.z + Math.sin(time * 0.47) * 0.008;
+              originalHeadRotation.z + Math.sin(time * 0.47) * 0.008 * sway;
           }
           if (neck && originalNeckRotation)
             neck.rotation.x =
-              originalNeckRotation.x + Math.sin(time * 0.7) * 0.004;
+              originalNeckRotation.x +
+              Math.sin(time * 0.7) * 0.004 +
+              (userSpeaking ? 0.015 : 0);
           const blinkProgress = time - blinkStart;
           let blink = 0;
           if (blinkProgress >= 0 && blinkProgress < 0.19)
