@@ -239,3 +239,110 @@ test("五轮练习仅在确认发送时上传录音，失败后可重试并追�
   }
 });
 
+test("同意语音面试后自动接话，问候留在同一题", async ({ page }) => {
+  const id = "55555555-5555-4555-8555-555555555555";
+  const path = "/api/projects/" + id + "/practice";
+  const responses: Record<string, unknown> = {
+    "/api/config": { modelMode: "demo", paymentMode: "mock", speechEnabled: true },
+    "/api/me": { id: "synthetic", username: "合成用户" },
+    ["/api/projects/" + id]: { id, version: 1, name: "预约系统", responsibility: "预约接口", resume: "", facts: [] },
+    "/api/trainings": [],
+    "/api/shop": { orders: [], packages: [] },
+  };
+  const initialTurn = { id: "first", question: "如何避免重复预约？", answer: "" };
+  const response = { status: "ACTIVE", maxTurns: 5, turns: [initialTurn] };
+  const sufficient = "我们在数据库设置请求标识的唯一约束，重复请求读取原结果，并验证两次同时提交只产生一条记录。";
+  const sentences = ["你好", sufficient];
+  const replies = [
+    { ...response, turns: [{ ...initialTurn, exchanges: [{ answer: "你好", reply: "你好，我们继续说说重复预约。" }] }] },
+    { ...response, turns: [{ ...initialTurn, answer: sufficient }, { id: "second", question: "如何处理缓存失效？", answer: "" }] },
+  ];
+  let uploads = 0;
+  let submissions = 0;
+  await page.route("**/api/**", route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === path + "/transcribe") {
+      const form = request.postDataBuffer()!.toString("latin1");
+      expect(form).toContain('name="turnId"\r\n\r\nfirst');
+      expect(form).toContain('name="exchangeCount"\r\n\r\n' + uploads);
+      expect(form).toContain("RIFF");
+      return route.fulfill({ json: { text: sentences[uploads++] } });
+    }
+    if (pathname !== path) return route.fulfill({ json: responses[pathname] ?? null });
+    if (request.method() === "GET") return route.fulfill({ json: response });
+    expect(request.postDataJSON()).toEqual({
+      answer: sentences[submissions], dialogue: true, turnId: "first", exchangeCount: submissions,
+    });
+    return route.fulfill({ json: replies[submissions++] });
+  });
+
+  await page.route(/\/src\/voice-activity\.ts(?:\?|$)/, route => route.fulfill({
+    contentType: "text/javascript",
+    body: [
+      "export class VoiceActivity {",
+      "  static async create(_rate, begin, end) {",
+      "    let armed = false;",
+      "    window.testSpeak = () => { if (armed) { begin(); end(new Float32Array(16000)); } };",
+      "    return { feed() {}, pause() { armed = false }, async resume() { armed = true }, async destroy() { armed = false } };",
+      "  }",
+      "}",
+    ].join("\n"),
+  }));
+  await page.addInitScript(() => {
+    const state = window as unknown as {
+      testMic?: MediaStreamTrack;
+      testPlayback?: SpeechSynthesisUtterance;
+    };
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      value: async () => {
+        const stream = new AudioContext().createMediaStreamDestination().stream;
+        state.testMic = stream.getAudioTracks()[0];
+        return stream;
+      },
+    });
+    Object.defineProperties(speechSynthesis, {
+      speak: { value: (utterance: SpeechSynthesisUtterance) => {
+        state.testPlayback = utterance;
+        queueMicrotask(() => utterance.onstart?.(new Event("start") as SpeechSynthesisEvent));
+      } },
+      cancel: { value: () => { state.testPlayback = undefined; } },
+    });
+  });
+
+  await page.goto("/#/projects/" + id);
+  const micState = () => page.evaluate(() => {
+    const mic = (window as unknown as { testMic?: MediaStreamTrack }).testMic;
+    return mic ? [mic.readyState, mic.enabled] : null;
+  });
+  const endPlayback = () => page.evaluate(() => {
+    const state = window as unknown as { testPlayback: SpeechSynthesisUtterance };
+    state.testPlayback.onend?.(new Event("end") as SpeechSynthesisEvent);
+  });
+  const saySomething = () => page.evaluate(() => {
+    (window as unknown as { testSpeak: () => void }).testSpeak();
+  });
+  const start = page.getByRole("button", { name: "同意并进入语音面试" });
+  await expect(start).toHaveAccessibleDescription(/自动发往阿里云百炼/);
+  expect(await micState()).toBeNull();
+  await start.click();
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  await expect(room.getByText("轮到你时，麦克风会自动恢复")).toBeVisible();
+  await expect.poll(micState).toEqual(["live", false]);
+  expect(uploads).toBe(0);
+  await endPlayback();
+  await expect(room.getByText("麦克风已开启，可以直接说话")).toBeVisible();
+  await saySomething();
+  await expect(room.getByText("你好，我们继续说说重复预约。")).toBeVisible();
+  await expect(room.getByText("第 1 / 5 题")).toBeVisible();
+  await expect.poll(micState).toEqual(["live", false]);
+  await endPlayback();
+  await expect(room.getByText("麦克风已开启，可以直接说话")).toBeVisible();
+  await saySomething();
+  await expect(room.getByText("第 2 / 5 题")).toBeVisible();
+  await expect(room.getByRole("heading", { name: "如何处理缓存失效？" })).toBeVisible();
+  expect([uploads, submissions]).toEqual([2, 2]);
+  await room.getByRole("button", { name: "返回项目" }).click();
+  await expect(room).toBeHidden();
+  await expect.poll(micState).toEqual(["ended", false]);
+});
