@@ -177,3 +177,65 @@ test("结束语音输入后等待浏览器的最终文字", async ({ page }) => 
   await expect(room.getByText("语音已填入回答")).toBeVisible();
 });
 
+test("五轮练习仅在确认发送时上传录音，失败后可重试并追加转写", async ({ page }) => {
+  const id = "44444444-4444-4444-8444-444444444444";
+  const practice = "/api/projects/" + id + "/practice";
+  const responses: Record<string, unknown> = {
+    "/api/config": { modelMode: "live", paymentMode: "mock", speechEnabled: true },
+    "/api/me": { id: "synthetic", username: "合成用户" },
+    ["/api/projects/" + id]: { id, version: 1, name: "合成项目", responsibility: "接口", resume: "", facts: [] },
+    [practice]: {
+      status: "ACTIVE", maxTurns: 5,
+      turns: [{ id: "asr-turn", question: "请说明预约流程。", answer: "" }],
+    },
+    "/api/trainings": [],
+    "/api/shop": { orders: [], packages: [] },
+  };
+  const uploads: Buffer[] = [];
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === practice + "/transcribe") {
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().headers()["content-type"]).toContain("multipart/form-data");
+      uploads.push(route.request().postDataBuffer()!);
+      if (uploads.length === 1)
+        return route.fulfill({ status: 503, json: { message: "合成转写超时" } });
+      return route.fulfill({ json: { text: "预约 API 会校验唯一键。" } });
+    }
+    return route.fulfill({ json: responses[path] ?? null });
+  });
+  await page.route("**/vad/**/*.onnx", route => route.fulfill({ status: 503 }));
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      value: async () => new AudioContext().createMediaStreamDestination().stream,
+    });
+  });
+
+  await page.goto("/#/projects/" + id);
+  await page.getByRole("button", { name: "进入面试室" }).click();
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const answer = room.getByRole("textbox", { name: "体验回答" });
+  await answer.fill("原有草稿");
+  await room.getByRole("button", { name: "开始语音输入" }).click();
+  const stop = room.getByRole("button", { name: "结束录音" });
+  await expect(stop).toBeVisible();
+  await expect(room.getByText("0:01", { exact: false })).toBeVisible();
+  await stop.click();
+
+  const send = room.getByRole("button", { name: "发送至百炼转写" });
+  await expect(send).toBeEnabled();
+  expect(uploads).toHaveLength(0);
+  await send.click();
+  await expect(room.getByRole("alert")).toContainText("合成转写超时");
+  await expect(answer).toHaveValue("原有草稿");
+  await expect(room.locator("audio")).toBeVisible();
+  await send.click();
+  await expect(answer).toHaveValue("原有草稿\n预约 API 会校验唯一键。");
+  expect(uploads).toHaveLength(2);
+  for (const upload of uploads) {
+    expect(upload.includes(Buffer.from('name="turnId"'))).toBeTruthy();
+    expect(upload.includes(Buffer.from("asr-turn"))).toBeTruthy();
+    expect(upload.includes(Buffer.from("RIFF"))).toBeTruthy();
+  }
+});
+
