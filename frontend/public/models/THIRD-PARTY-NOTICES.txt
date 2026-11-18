@@ -1,6 +1,7 @@
-3D asset from https://github.com/seehiong/ai-avatar/blob/main/assets/models/mpfb-interviewer-male.glb
-MakeHuman / MPFB system assets (CC0), TalkingHead rig (MIT).
-See https://github.com/seehiong/ai-avatar/blob/main/THIRD_PARTY_NOTICES.md
+interviewer.glb is a custom export of the MakeHuman / MPFB assets packaged by
+HumanForge v0.5.0 (CC0 1.0). It includes the culturalibre_hair_02 hairstyle by
+culturalibre (CC0 1.0) and the MakeHuman male_casualsuit01 outfit (CC0 1.0).
+Asset sources: https://github.com/abdulrehman043/humanforge/blob/b3e5885ade1b3d48e12994a121e33e07e806390b/LICENSE.ASSETS.md
 
 MediaPipe Tasks Vision (@mediapipe/tasks-vision 1.2.3) and the Face Landmarker
 model (face_landmarker.task) are Copyright The MediaPipe Authors, licensed
