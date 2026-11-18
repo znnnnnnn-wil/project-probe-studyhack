@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type SpeechTarget = { projectId: string; turnId: string };
+export type SpeechTarget = { projectId: string; turnId: string; exchangeCount?: number };
 
 export function useQuestionSpeech(ttsEnabled = false) {
   const [speaking, setSpeaking] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   // -1 表示当前没有云端音频分析，口型退回程序化动画。
   const mouthLevel = useRef(-1);
   const speechId = useRef(0);
   const audioContext = useRef<AudioContext | null>(null);
   const release = useRef<(() => void) | null>(null);
+  const startTimer = useRef<number | undefined>(undefined);
   const browserSupported =
     typeof window !== "undefined" && "speechSynthesis" in window;
   const supported = ttsEnabled || browserSupported;
@@ -16,13 +18,33 @@ export function useQuestionSpeech(ttsEnabled = false) {
     speechId.current++;
     release.current?.();
     release.current = null;
+    window.clearTimeout(startTimer.current);
     mouthLevel.current = -1;
     if (browserSupported) window.speechSynthesis.cancel();
     setSpeaking(false);
+    setPreparing(false);
   }, [browserSupported]);
+  const startPlayback = useCallback((id: number) => {
+    if (id !== speechId.current) return;
+    window.clearTimeout(startTimer.current);
+    setPreparing(false);
+    setSpeaking(true);
+  }, []);
+  const unlock = useCallback(() => {
+    if (typeof AudioContext === "undefined") return;
+    try {
+      const context = audioContext.current ?? (audioContext.current = new AudioContext());
+      void context.resume().catch(() => {});
+    } catch {
+      // Playback can still use the browser speech synthesizer.
+    }
+  }, []);
   const browserSpeak = useCallback(
     (text: string, id: number) => {
-      if (!browserSupported) return;
+      if (!browserSupported) {
+        if (id === speechId.current) stop();
+        return;
+      }
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "zh-CN";
       utterance.rate = 0.94;
@@ -34,17 +56,23 @@ export function useQuestionSpeech(ttsEnabled = false) {
             /Yunxi|Yunyang|Male|云希|云扬/.test(voice.name),
         ) || voices.find((voice) => voice.lang.startsWith("zh"));
       if (preferred) utterance.voice = preferred;
-      utterance.onstart = () => {
-        if (id === speechId.current) setSpeaking(true);
-      };
+      utterance.onstart = () => startPlayback(id);
       const finished = () => {
-        if (id === speechId.current) setSpeaking(false);
+        if (id === speechId.current) {
+          window.clearTimeout(startTimer.current);
+          setSpeaking(false);
+          setPreparing(false);
+        }
       };
       utterance.onend = finished;
       utterance.onerror = finished;
-      window.speechSynthesis.speak(utterance);
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        finished();
+      }
     },
-    [browserSupported],
+    [browserSupported, startPlayback, stop],
   );
   const cloudSpeak = useCallback(
     async (text: string, target: SpeechTarget, id: number) => {
@@ -63,7 +91,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
         } catch {}
         source?.disconnect();
         if (objectUrl) URL.revokeObjectURL(objectUrl);
-        mouthLevel.current = -1;
+        if (id === speechId.current) mouthLevel.current = -1;
       };
       release.current = cleanup;
       try {
@@ -74,7 +102,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
             credentials: "same-origin",
             signal: controller.signal,
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ turnId: target.turnId }),
+            body: JSON.stringify({ turnId: target.turnId, exchangeCount: target.exchangeCount }),
           },
         );
         if (!response.ok || !response.body) throw new Error("tts unavailable");
@@ -146,7 +174,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
           "playing",
           () => {
             if (id !== speechId.current) return;
-            setSpeaking(true);
+            startPlayback(id);
             tick();
           },
           { once: true },
@@ -156,6 +184,8 @@ export function useQuestionSpeech(ttsEnabled = false) {
           cancelAnimationFrame(frame);
           mouthLevel.current = -1;
           setSpeaking(false);
+          setPreparing(false);
+          window.clearTimeout(startTimer.current);
         };
         audio.addEventListener("ended", finished, { once: true });
         audio.addEventListener("error", finished, { once: true });
@@ -178,25 +208,30 @@ export function useQuestionSpeech(ttsEnabled = false) {
         await audio.play();
       } catch (cause) {
         cleanup();
-        release.current = null;
         if (
           id === speechId.current &&
           !(cause instanceof DOMException && cause.name === "AbortError")
-        )
+        ) {
+          release.current = null;
           browserSpeak(text, id);
+        }
       }
     },
-    [browserSpeak],
+    [browserSpeak, startPlayback],
   );
   const speak = useCallback(
     (text: string, target?: SpeechTarget) => {
       stop();
-      if (!text.trim()) return;
+      if (!text.trim() || !supported) return;
       const id = speechId.current;
+      setPreparing(true);
+      startTimer.current = window.setTimeout(() => {
+        if (id === speechId.current) stop();
+      }, 16000);
       if (ttsEnabled && target) void cloudSpeak(text, target, id);
       else browserSpeak(text, id);
     },
-    [stop, ttsEnabled, cloudSpeak, browserSpeak],
+    [stop, supported, ttsEnabled, cloudSpeak, browserSpeak],
   );
   useEffect(
     () => () => {
@@ -206,7 +241,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
     },
     [stop],
   );
-  return { speaking, speak, stop, supported, mouthLevel };
+  return { preparing, speaking, speak, stop, unlock, supported, mouthLevel };
 }
 
 export function useCameraPreview() {
