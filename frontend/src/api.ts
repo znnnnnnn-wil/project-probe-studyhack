@@ -47,6 +47,7 @@ export async function upload<T>(
   file: Blob,
   filename: string,
   extra: Record<string, string> = {},
+  signal?: AbortSignal,
 ): Promise<T> {
   const data = new FormData();
   data.append("file", file, filename);
@@ -55,6 +56,7 @@ export async function upload<T>(
     method: "POST",
     credentials: "same-origin",
     body: data,
+    signal,
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok)
