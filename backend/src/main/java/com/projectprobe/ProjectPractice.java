@@ -49,6 +49,21 @@ class ProjectPractice {
     }
     result.put("leaseUntil", lease); return result;
   }
+
+  Map<String, Object> requireUnansweredTurn(String user, String projectId, String turnId, Object exchangeCount) {
+    var current = get(user, projectId);
+    if (!"ACTIVE".equals(current.get("status"))) {
+      throw error(409, "本题已结束，请重新加载当前问题");
+    }
+    var turns = list(current, "turns");
+    var turn = turns.isEmpty() ? Map.<String, Object>of() : turns.get(turns.size() - 1);
+    if (!turnId.equals(turn.get("id")) || !str(turn, "answer").isBlank() ||
+        (exchangeCount != null && !PracticeDialogue.matchesCount(exchangeCount, PracticeDialogue.count(turn)))) {
+      throw error(409, "本题已结束，请重新加载当前问题");
+    }
+    return turn;
+  }
+
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
     String token = id();
     var claim = s.locked(user, () -> {
@@ -70,16 +85,27 @@ class ProjectPractice {
       if (!turns.isEmpty()) {
         var turn = turns.get(turns.size() - 1); String answer = str(input, "answer").strip();
         int limit = ((Number) current.getOrDefault("maxTurns", 1)).intValue();
+        int exchangeCount = PracticeDialogue.count(turn);
+        var pending = PracticeRetest.object(current.get("pendingExchange"));
+        boolean dialogue = Boolean.TRUE.equals(input.get("dialogue")) || exchangeCount > 0 || !pending.isEmpty();
         if (!answer.isBlank() && limit > 1 && !str(turn, "id").equals(str(input, "turnId")))
           throw error(409, "当前问题已变化，请重新读取后再提交");
-        if (answer.isBlank() && str(turn, "answer").isBlank()) {
+        if (!answer.isBlank() && dialogue && (
+          !str(turn, "id").equals(str(input, "turnId")) ||
+          !PracticeDialogue.matchesCount(input.get("exchangeCount"), exchangeCount)
+        )) throw error(409, "对话进度已更新，请重新读取后再回复");
+        if (answer.isBlank() && str(turn, "answer").isBlank() && pending.isEmpty()) {
           s.db.update("UPDATE project_trials SET status='ACTIVE',lease_until=0,lease_token=NULL WHERE user_id=?", user);
           return null;
         }
         if (!answer.isBlank()) {
           if (answer.length() > 3000) throw error(400, "体验回答最多3000字");
           if (!str(turn, "answer").isBlank() && !answer.equals(turn.get("answer"))) throw error(409, "体验回答已提交");
-          turn.put("answer", answer);
+          if (dialogue) {
+            if (!pending.isEmpty() && !answer.equals(str(pending, "answer")))
+              throw error(409, "上一段发言已保存，请先恢复生成");
+            current.put("pendingExchange", Map.of("turnId", turn.get("id"), "answer", answer, "exchangeCount", exchangeCount));
+          } else turn.put("answer", answer);
         }
       }
       s.db.update("UPDATE project_trials SET status='GENERATING',body=?,lease_until=?,lease_token=? WHERE user_id=?",
@@ -87,20 +113,44 @@ class ProjectPractice {
       return current;
     });
     if (claim == null) return get(user, projectId);
+    long priorDeadline = model.questionDeadline.get();
+    model.questionDeadline.set(Math.min(priorDeadline, now() + 85000));
     try {
       var turns = list(claim, "turns");
       if (turns.isEmpty()) {
         var question = model.firstDeepQuestion(claim);
         turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
-      } else if (str(turns.get(turns.size() - 1), "answer").isBlank()) {
-        // An unanswered question is never replaced by a retry.
-      } else if (turns.size() < ((Number) claim.getOrDefault("maxTurns", 1)).intValue()) {
-        var question = model.question(claim);
-        turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
-      } else claim.put("report", model.report(claim));
+      } else {
+        var turn = turns.get(turns.size() - 1);
+        var pending = PracticeRetest.object(claim.get("pendingExchange"));
+        if (!pending.isEmpty()) {
+          if (!str(turn, "id").equals(str(pending, "turnId")) ||
+              !PracticeDialogue.matchesCount(pending.get("exchangeCount"), PracticeDialogue.count(turn)))
+            throw error(409, "对话进度已更新，请重新读取后再回复");
+          String utterance = str(pending, "answer");
+          var reply = PracticeDialogue.decide(model, claim, turn, utterance);
+          var exchanges = list(turn, "exchanges");
+          exchanges.add(Map.of("answer", utterance, "reply", reply.text()));
+          claim.remove("pendingExchange");
+          if (reply.advance()) {
+            turn.put("answer", PracticeDialogue.combinedAnswer(exchanges));
+            // Keep the model's decision if generating the next question or report fails.
+            s.locked(user, () -> {
+              requireLease(user, token);
+              s.db.update("UPDATE project_trials SET body=? WHERE user_id=?", s.encode(claim), user);
+              return null;
+            });
+          }
+        }
+        if (!str(turn, "answer").isBlank()) {
+          if (turns.size() < ((Number) claim.getOrDefault("maxTurns", 1)).intValue()) {
+            var question = model.question(claim);
+            turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
+          } else claim.put("report", model.report(claim));
+        }
+      }
       s.locked(user, () -> {
-        var row = s.one("SELECT * FROM project_trials WHERE user_id=?", user);
-        if (!token.equals(row.get("lease_token")) || ((Number) row.get("lease_until")).longValue() <= now()) throw error(409, "生成租约已失效，请重试");
+        requireLease(user, token);
         s.db.update("UPDATE project_trials SET status=?,body=?,lease_until=0,lease_token=NULL WHERE user_id=?",
           claim.containsKey("report") ? "COMPLETED" : "ACTIVE", s.encode(claim), user);
         if (claim.containsKey("report")) journey.record(user, "TRIAL_COMPLETED", projectId);
@@ -109,7 +159,16 @@ class ProjectPractice {
     } catch (Exception e) {
       s.db.update("UPDATE project_trials SET status='FAILED',lease_until=0 WHERE user_id=? AND lease_token=?", user, token);
       throw error(503, "体验生成失败，已保存进度，可在原项目重试");
+    } finally {
+      if (priorDeadline == Long.MAX_VALUE) model.questionDeadline.remove();
+      else model.questionDeadline.set(priorDeadline);
     }
     return get(user, projectId);
+  }
+
+  private void requireLease(String user, String token) {
+    var row = s.one("SELECT * FROM project_trials WHERE user_id=?", user);
+    if (!token.equals(row.get("lease_token")) || ((Number) row.get("lease_until")).longValue() <= now())
+      throw error(409, "生成租约已失效，请重试");
   }
 }

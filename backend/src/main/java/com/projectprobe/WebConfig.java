@@ -44,7 +44,7 @@ public class WebConfig extends OncePerRequestFilter {
       (req.getRequestURI().equals("/api/resume/import") ||
         req
           .getRequestURI()
-          .matches("/api/trainings/[a-f0-9-]{36}/transcribe")) &&
+          .matches("/api/(trainings/[a-f0-9-]{36}|projects/[a-f0-9-]{36}/practice)/transcribe")) &&
       Objects.toString(req.getContentType(), "").startsWith(
         "multipart/form-data"
       );
