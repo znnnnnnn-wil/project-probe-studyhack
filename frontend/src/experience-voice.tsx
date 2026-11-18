@@ -3,11 +3,9 @@ import { Mic, Square, X, LoaderCircle, Plus, AudioLines, Check } from "lucide-re
 import type { VoiceActivity } from "./voice-activity";
 import "./experience-voice.css";
 interface SpeechResultLike {
-  isFinal: boolean;
   0: { transcript: string };
 }
 interface SpeechResultEventLike {
-  resultIndex: number;
   results: { length: number; [index: number]: SpeechResultLike };
 }
 interface SpeechErrorEventLike {
@@ -18,9 +16,11 @@ interface SpeechRecognitionLike {
   continuous: boolean;
   interimResults: boolean;
   maxAlternatives: number;
-  start(): void;
+  start(track?: MediaStreamTrack): void;
   stop(): void;
   abort(): void;
+  onstart: (() => void) | null;
+  onspeechstart: (() => void) | null;
   onresult: ((event: SpeechResultEventLike) => void) | null;
   onerror: ((event: SpeechErrorEventLike) => void) | null;
   onend: (() => void) | null;
@@ -34,6 +34,44 @@ function recognitionCtor(): SpeechRecognitionCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 const MAX_SECONDS = 180;
+const CONNECTION_TIMEOUT = 10000;
+const RESULT_TIMEOUT = 5000;
+
+type VoiceState = "idle" | "requesting" | "recording" | "finishing";
+type VoiceSession = {
+  recognizer: SpeechRecognitionLike;
+  phase: Exclude<VoiceState, "idle">;
+  text: string;
+  heard: boolean;
+  stream?: MediaStream;
+  context?: AudioContext;
+  node?: AudioWorkletNode;
+  vad?: VoiceActivity;
+  clock?: number;
+  timeout?: number;
+};
+
+function releaseSession(voice: VoiceSession, abort: boolean) {
+  window.clearTimeout(voice.timeout);
+  window.clearInterval(voice.clock);
+  const recognizer = voice.recognizer;
+  recognizer.onstart = null;
+  recognizer.onspeechstart = null;
+  recognizer.onresult = null;
+  recognizer.onerror = null;
+  recognizer.onend = null;
+  if (abort) {
+    try {
+      recognizer.abort();
+    } catch {
+      // A browser may already have ended this recognition session.
+    }
+  }
+  voice.node?.disconnect();
+  voice.stream?.getTracks().forEach(track => track.stop());
+  void voice.vad?.destroy().catch(() => {});
+  void voice.context?.close().catch(() => {});
+}
 
 export function ExperienceVoice({
   disabled,
@@ -47,7 +85,8 @@ export function ExperienceVoice({
   onBusy?: (busy: boolean) => void;
 }) {
   const [supported] = useState(() => recognitionCtor() !== null);
-  const [state, setState] = useState<"idle" | "requesting" | "recording">("idle");
+  const [state, setState] = useState<VoiceState>("idle");
+  const [language, setLanguage] = useState("zh-CN");
   const [seconds, setSeconds] = useState(0);
   const [level, setLevel] = useState(0);
   const [live, setLive] = useState("");
@@ -58,54 +97,16 @@ export function ExperienceVoice({
   const [error, setError] = useState("");
   const [overflow, setOverflow] = useState("");
 
-  const mounted = useRef(true);
-  const recording = useRef(false);
-  const finalText = useRef("");
-  const interimText = useRef("");
-  const speechDetected = useRef(false);
-  const recognition = useRef<SpeechRecognitionLike | null>(null);
+  const session = useRef<VoiceSession | null>(null);
   const current = useRef({ remaining, onAppend, disabled, autoStop });
   current.current = { remaining, onAppend, disabled, autoStop };
   const busyCallback = useRef(onBusy);
   busyCallback.current = onBusy;
-  const resources = useRef<{
-    stream?: MediaStream;
-    context?: AudioContext;
-    node?: AudioWorkletNode;
-    timer?: number;
-    vad?: VoiceActivity;
-  }>({});
-
-  const releaseAudio = () => {
-    window.clearInterval(resources.current.timer);
-    resources.current.node?.disconnect();
-    resources.current.stream?.getTracks().forEach((track) => track.stop());
-    void resources.current.vad?.destroy().catch(() => {});
-    void resources.current.context?.close().catch(() => {});
-    resources.current = {};
-  };
-  const releaseRecognition = () => {
-    const rec = recognition.current;
-    recognition.current = null;
-    if (rec) {
-      rec.onresult = null;
-      rec.onerror = null;
-      rec.onend = null;
-      try {
-        rec.abort();
-      } catch {
-        /* already stopped */
-      }
-    }
-  };
-
   useEffect(() => {
-    mounted.current = true;
     return () => {
-      mounted.current = false;
-      recording.current = false;
-      releaseAudio();
-      releaseRecognition();
+      const voice = session.current;
+      session.current = null;
+      if (voice) releaseSession(voice, true);
       busyCallback.current?.(false);
     };
   }, []);
@@ -114,9 +115,6 @@ export function ExperienceVoice({
   }, [state, onBusy]);
 
   const reset = () => {
-    finalText.current = "";
-    interimText.current = "";
-    speechDetected.current = false;
     setLive("");
     setHeard(false);
     setVadReady(false);
@@ -124,23 +122,21 @@ export function ExperienceVoice({
     setSeconds(0);
   };
 
-  const finish = (commit: boolean, message = "") => {
-    if (!recording.current) return;
-    recording.current = false;
-    const text = (finalText.current + interimText.current).trim();
-    releaseAudio();
-    releaseRecognition();
-    if (!mounted.current) return;
-    setLevel(0);
+  const settle = (voice: VoiceSession, commit: boolean, abort: boolean, message = "") => {
+    if (session.current !== voice) return;
+    session.current = null;
+    releaseSession(voice, abort);
     setState("idle");
+    reset();
     if (!commit) {
-      reset();
       if (message) setError(message);
       return;
     }
-    reset();
+    const text = voice.text.trim();
     if (!text) {
-      setNotice("未识别到语音，请靠近麦克风重试");
+      setError(message || (voice.heard
+        ? "已检测到说话，浏览器未返回文字。请确认识别语言后重试"
+        : "浏览器未识别到语音，请检查麦克风选项后重试"));
       return;
     }
     if (text.length > current.current.remaining || current.current.disabled) {
@@ -152,14 +148,84 @@ export function ExperienceVoice({
     setNotice("语音已填入回答");
   };
 
-  const start = async () => {
-    if (recording.current || resources.current.stream) return;
-    const Ctor = recognitionCtor();
-    if (!Ctor) {
-      setError("当前浏览器不支持语音识别，请使用 Chrome / Edge 或文字回答");
-      return;
+  const requestStop = (voice: VoiceSession) => {
+    if (session.current !== voice || voice.phase !== "recording") return;
+    voice.phase = "finishing";
+    setState("finishing");
+    window.clearInterval(voice.clock);
+    voice.timeout = window.setTimeout(() => {
+      settle(voice, true, true, "浏览器语音识别返回超时，请重试");
+    }, RESULT_TIMEOUT);
+    try {
+      // Keep receiving events until the recognizer returns the last phrase.
+      voice.recognizer.stop();
+    } catch {
+      settle(voice, true, true, "浏览器语音识别中断，请重试");
     }
-    if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
+  };
+
+  const monitorAudio = async (voice: VoiceSession, stream: MediaStream) => {
+    const active = () => session.current === voice && voice.phase !== "finishing";
+    try {
+      const context = new AudioContext({ sampleRate: 16000 });
+      voice.context = context;
+      await context.audioWorklet.addModule("/voice-recorder.js");
+      if (!active()) return;
+      await context.resume();
+      if (!active()) return;
+
+      const node = new AudioWorkletNode(context, "voice-recorder");
+      voice.node = node;
+      node.port.onmessage = (event) => {
+        if (session.current !== voice || voice.phase !== "recording") return;
+        const chunk = event.data as Float32Array;
+        const rms = Math.sqrt(
+          chunk.reduce((sum, value) => sum + value * value, 0) / chunk.length,
+        );
+        setLevel(Math.min(100, rms * 400));
+        voice.vad?.feed(chunk);
+      };
+      context.createMediaStreamSource(stream).connect(node);
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      node.connect(mute).connect(context.destination);
+
+      const { VoiceActivity } = await import("./voice-activity");
+      if (!active()) return;
+      const vad = await VoiceActivity.create(
+        context.sampleRate,
+        () => {
+          if (session.current !== voice || voice.phase !== "recording") return;
+          voice.heard = true;
+          setHeard(true);
+        },
+        () => {
+          if (current.current.autoStop) requestStop(voice);
+        },
+        () => {
+          if (session.current !== voice || voice.phase !== "recording") return;
+          const failed = voice.vad;
+          voice.vad = undefined;
+          void failed?.destroy().catch(() => {});
+          setVadReady(false);
+        },
+      );
+      if (!active()) {
+        await vad.destroy();
+        return;
+      }
+      voice.vad = vad;
+      setVadReady(true);
+    } catch {
+      if (session.current === voice) setVadReady(false);
+    }
+  };
+
+  const start = async () => {
+    if (session.current) return;
+    const Ctor = recognitionCtor();
+    if (!Ctor) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
       setError("当前浏览器不支持录音，请改用新版浏览器或文字回答");
       return;
     }
@@ -167,172 +233,92 @@ export function ExperienceVoice({
     setNotice("");
     setOverflow("");
     reset();
-    setState("requesting");
+    let rec: SpeechRecognitionLike;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      rec = new Ctor();
+    } catch {
+      setError("无法启动浏览器语音识别，请重试");
+      return;
+    }
+    const voice: VoiceSession = { recognizer: rec, phase: "requesting", text: "", heard: false };
+    session.current = voice;
+    setState("requesting");
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         video: false,
       });
-      if (!mounted.current) {
+      if (session.current !== voice) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
-      resources.current.stream = stream;
-      const context = new AudioContext({ sampleRate: 16000 });
-      resources.current.context = context;
-      await context.audioWorklet.addModule("/voice-recorder.js");
-      if (!mounted.current) {
-        releaseAudio();
-        return;
-      }
-      await context.resume();
+      voice.stream = stream;
+    } catch (cause) {
+      settle(voice, false, true, cause instanceof DOMException && cause.name === "NotAllowedError"
+        ? "麦克风权限未允许，请在浏览器中允许后重试"
+        : "无法启动麦克风，请检查设备后重试");
+      return;
+    }
+    const [track] = stream.getAudioTracks();
+    if (!track) {
+      settle(voice, false, true, "没有可用的麦克风输入，请检查所选设备");
+      return;
+    }
 
-      // Silero VAD：检测说话开始与静音结束（静音自动停止）。
-      try {
-        const creation = import("./voice-activity").then(({ VoiceActivity }) =>
-          VoiceActivity.create(
-            context.sampleRate,
-            () => {
-              speechDetected.current = true;
-              if (mounted.current && recording.current) setHeard(true);
-            },
-            () => {
-              if (recording.current && current.current.autoStop) finish(true);
-            },
-            () => {
-              if (!mounted.current || !recording.current) return;
-              const failed = resources.current.vad;
-              resources.current.vad = undefined;
-              void failed?.destroy().catch(() => {});
-              setVadReady(false);
-              setNotice("静音检测暂不可用，可手动结束录音");
-            },
-          ),
-        );
-        let abandoned = false;
-        let timeout: number | undefined;
-        const guarded = creation.then((vad) => {
-          if (abandoned) {
-            void vad.destroy().catch(() => {});
-            throw new Error("VAD loading expired");
-          }
-          return vad;
-        });
-        let vad: VoiceActivity;
-        try {
-          vad = await Promise.race([
-            guarded,
-            new Promise<never>((_, reject) => {
-              timeout = window.setTimeout(() => {
-                abandoned = true;
-                reject(new Error("VAD loading timed out"));
-              }, 15000);
-            }),
-          ]);
-        } finally {
-          window.clearTimeout(timeout);
-        }
-        if (!mounted.current) {
-          await vad.destroy();
-          releaseAudio();
-          return;
-        }
-        resources.current.vad = vad;
-        setVadReady(true);
-      } catch {
-        if (!mounted.current) {
-          releaseAudio();
-          return;
-        }
-        setVadReady(false);
-        setNotice("静音检测加载失败，可手动结束录音");
-      }
-
-      const node = new AudioWorkletNode(context, "voice-recorder");
-      resources.current.node = node;
-      node.port.onmessage = (event) => {
-        if (!recording.current) return;
-        const chunk = event.data as Float32Array;
-        const rms = Math.sqrt(
-          chunk.reduce((sum, value) => sum + value * value, 0) / chunk.length,
-        );
-        setLevel(Math.min(100, rms * 400));
-        resources.current.vad?.feed(chunk);
-      };
-      context.createMediaStreamSource(stream).connect(node);
-      const mute = context.createGain();
-      mute.gain.value = 0;
-      node.connect(mute).connect(context.destination);
-
-      // Web Speech API：实时转写为中文文本。
-      const rec = new Ctor();
-      recognition.current = rec;
-      rec.lang = "zh-CN";
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-      rec.onresult = (event) => {
-        if (!recording.current) return;
-        let interim = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) finalText.current += result[0].transcript;
-          else interim += result[0].transcript;
-        }
-        interimText.current = interim;
-        setLive((finalText.current + interim).trim());
-      };
-      rec.onerror = (event) => {
-        if (!recording.current) return;
-        if (event.error === "aborted") return;
-        const message =
-          event.error === "no-speech"
-            ? "未检测到语音，请靠近麦克风重试"
-            : event.error === "not-allowed" || event.error === "service-not-allowed"
-              ? "麦克风或语音服务权限未允许，请在浏览器中允许后重试"
-              : event.error === "audio-capture"
-                ? "无法访问麦克风，请检查设备后重试"
-                : event.error === "network"
-                  ? "语音识别网络异常，请检查网络后重试"
-                  : "语音识别中断，请重试";
-        finish(false, message);
-      };
-      rec.onend = () => {
-        // 识别引擎自身结束（含静音）时，提交已识别文字。
-        if (recording.current) finish(true);
-      };
-
-      recording.current = true;
-      try {
-        rec.start();
-      } catch {
-        finish(false, "无法启动语音识别，请重试");
-        return;
-      }
+    rec.lang = language;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.onstart = () => {
+      if (session.current !== voice || voice.phase !== "requesting") return;
+      voice.phase = "recording";
+      window.clearTimeout(voice.timeout);
+      setState("recording");
       const started = performance.now();
-      resources.current.timer = window.setInterval(() => {
+      voice.clock = window.setInterval(() => {
         const elapsed = (performance.now() - started) / 1000;
         setSeconds(Math.floor(elapsed));
-        if (resources.current.vad && !speechDetected.current && elapsed >= 10) {
-          finish(false, "未检测到语音，请检查麦克风后重新录音");
-          return;
-        }
-        if (elapsed >= MAX_SECONDS) finish(true);
+        if (elapsed >= MAX_SECONDS || (voice.vad && current.current.autoStop && !voice.heard && elapsed >= 10))
+          requestStop(voice);
       }, 250);
-      setSeconds(0);
-      setState("recording");
-    } catch (cause) {
-      releaseAudio();
-      releaseRecognition();
-      if (!mounted.current) return;
-      recording.current = false;
-      setError(
-        cause instanceof DOMException && cause.name === "NotAllowedError"
-          ? "麦克风权限未允许，请在浏览器中允许后重试"
-          : "无法启动麦克风，请检查设备后重试",
-      );
-      setState("idle");
+    };
+    rec.onspeechstart = () => {
+      if (session.current !== voice) return;
+      voice.heard = true;
+      setHeard(true);
+    };
+    rec.onresult = (event) => {
+      if (session.current !== voice) return;
+      voice.text = Array.from(event.results, result => result[0].transcript).join("").trim();
+      if (voice.text) {
+        voice.heard = true;
+        setHeard(true);
+      }
+      setLive(voice.text);
+    };
+    rec.onerror = (event) => {
+      const messages: Record<string, string> = {
+        "not-allowed": "浏览器未授予语音识别权限，请检查网站设置后重试",
+        "service-not-allowed": "当前浏览器的语音识别服务不可用，请换浏览器重试",
+        "audio-capture": "浏览器无法访问麦克风，请检查所选输入设备",
+        "network": "浏览器的语音识别服务连接失败，请检查网络后重试",
+        "language-not-supported": "当前浏览器不支持所选识别语言，请切换语言或浏览器",
+      };
+      const message = event.error === "no-speech" ? "" : messages[event.error] || "浏览器语音识别中断，请重试";
+      settle(voice, true, true, message);
+    };
+    rec.onend = () => settle(voice, true, false);
+    voice.timeout = window.setTimeout(() => {
+      settle(voice, true, true, "浏览器语音识别服务启动超时，请重试");
+    }, CONNECTION_TIMEOUT);
+    try {
+      rec.start(track);
+    } catch {
+      settle(voice, false, true, "无法启动浏览器语音识别，请重试");
+      return;
     }
+    if (session.current === voice) void monitorAudio(voice, stream);
   };
 
   const addOverflow = () => {
@@ -358,28 +344,45 @@ export function ExperienceVoice({
           <small>说话自动转文字 · 静音自动结束</small>
         </span>
         {state === "idle" && (
-          <button
-            type="button"
-            className="exp-voice-mic"
-            onClick={() => void start()}
-            disabled={!canStart}
-            title={
-              !supported
-                ? "当前浏览器不支持语音识别"
-                : remaining <= 0
-                  ? "回答字数已满"
-                  : "开始语音输入"
-            }
-            aria-label="开始语音输入"
-          >
-            <Mic size={16} aria-hidden="true" />
-            开始说话
-          </button>
+          <div className="exp-voice-actions">
+            <select
+              aria-label="识别语言"
+              value={language}
+              disabled={!supported || disabled}
+              onChange={event => setLanguage(event.target.value)}
+            >
+              <option value="zh-CN">普通话</option>
+              <option value="en-US">English</option>
+            </select>
+            <button
+              type="button"
+              className="exp-voice-mic"
+              onClick={() => void start()}
+              disabled={!canStart}
+              title={
+                !supported
+                  ? "当前浏览器不支持语音识别"
+                  : remaining <= 0
+                    ? "回答字数已满"
+                    : "开始语音输入"
+              }
+              aria-label="开始语音输入"
+            >
+              <Mic size={16} aria-hidden="true" />
+              开始说话
+            </button>
+          </div>
         )}
         {state === "requesting" && (
           <span className="exp-voice-connecting" role="status">
             <LoaderCircle className="spin" size={16} aria-hidden="true" />
-            正在连接麦克风
+            正在连接语音识别
+          </span>
+        )}
+        {state === "finishing" && (
+          <span className="exp-voice-connecting" role="status">
+            <LoaderCircle className="spin" size={16} aria-hidden="true" />
+            正在接收识别结果
           </span>
         )}
         {state === "recording" && (
@@ -429,7 +432,10 @@ export function ExperienceVoice({
               <button
                 type="button"
                 className="exp-voice-cancel"
-                onClick={() => finish(false)}
+                onClick={() => {
+                  const voice = session.current;
+                  if (voice) settle(voice, false, true);
+                }}
                 aria-label="取消录音"
               >
                 <X size={16} aria-hidden="true" />
@@ -438,7 +444,10 @@ export function ExperienceVoice({
               <button
                 type="button"
                 className="exp-voice-stop"
-                onClick={() => finish(true)}
+                onClick={() => {
+                  const voice = session.current;
+                  if (voice) requestStop(voice);
+                }}
                 aria-label="结束并填入回答"
               >
                 <Square size={14} aria-hidden="true" />
