@@ -174,10 +174,11 @@ public class ModelService {
       }
       if (response.statusCode() != 200) {
         log.warn(
-          "model_call_failed provider={} model={} httpStatus={}",
+          "model_call_failed provider={} model={} httpStatus={} body={}",
           provider,
           model,
-          response.statusCode()
+          response.statusCode(),
+          response.body().substring(0, Math.min(500, response.body().length()))
         );
         throw error(
           503,
