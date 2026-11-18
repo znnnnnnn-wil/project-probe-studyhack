@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Button } from "./ui";
 import type { Actions } from "./ui";
 import { useProjectPractice } from "./use-project-practice";
-import { ArrowLeft, ArrowRight, Camera, CameraOff, Check, ChevronDown, ChevronUp, Download, Maximize2, MessageSquare, RotateCcw, Sparkles, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, CameraOff, Check, ChevronDown, ChevronUp, Download, Maximize2, MessageSquare, Mic, RotateCcw, Sparkles, Volume2, VolumeX } from "lucide-react";
 import "./project-practice.css";
 import { PracticeNext } from "./practice-next";
 import { PracticeReview } from "./practice-review";
@@ -12,6 +12,7 @@ import { EvidenceReview } from "./evidence-review";
 import { PracticeRetest } from "./practice-retest";
 import { ExperienceVoice } from "./experience-voice";
 import { VoiceInput } from "./voice-input";
+import { PracticeConversationVoice } from "./practice-conversation-voice";
 import { InterviewerAvatar } from "./interviewer-avatar";
 import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
 import { useFacePresence } from "./use-face-presence";
@@ -24,6 +25,7 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, accept } = useProjectPractice(projectId);
   const [expanded, setExpanded] = useState(true);
   const [roomOpen, setRoomOpen] = useState(false);
+  const [voiceRoom, setVoiceRoom] = useState(false);
   const [practiceSurface] = useState(() => document.createElement("div"));
   const inlineContent = useRef<HTMLDivElement>(null);
   const roomContent = useRef<HTMLDivElement>(null);
@@ -32,6 +34,8 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   const transcript = useRef<HTMLOListElement>(null);
   const spokenPrompt = useRef("");
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [autoListening, setAutoListening] = useState(false);
+  const [autoProcessing, setAutoProcessing] = useState(false);
   const [sound, setSound] = useState(true);
   const [mediaConfig, setMediaConfig] = useState<{ ttsEnabled?: boolean; speechEnabled?: boolean }>();
   const [browserVoice, setBrowserVoice] = useState(false);
@@ -54,15 +58,34 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   const waiting = pending || ["LOADING", "GENERATING"].includes(value.status);
   const live = !!turn && !value.report && value.status !== "USED";
   const inRoom = roomOpen && live;
+  const canUseVoiceRoom = multi && !!mediaConfig?.speechEnabled;
+  const handsFree = inRoom && voiceRoom && canUseVoiceRoom;
   const stageVisible = live && expanded;
-  const openRoom = () => {
+  const openRoom = (voice: boolean) => {
     unlock();
     setExpanded(true);
+    setVoiceRoom(voice);
     setRoomOpen(true);
   };
   const closeRoom = () => {
     stop();
+    setAutoListening(false);
+    setAutoProcessing(false);
+    setVoiceRoom(false);
     setRoomOpen(false);
+  };
+  const switchToText = () => {
+    setVoiceRoom(false);
+    setAutoListening(false);
+    setAutoProcessing(false);
+  };
+  const sendVoice = (text: string) => {
+    if (text.length > 3000) {
+      edit(text);
+      switchToText();
+      return;
+    }
+    return run(() => submit(text));
   };
   const voiceProps = {
     disabled: busy || disabled || waiting || loadError || submitted || !mediaConfig,
@@ -112,11 +135,11 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   useEffect(() => {
     if (!stageVisible) camera.stop();
   }, [stageVisible, camera.stop]);
-  const listening = voiceBusy || face.speaking;
+  const listening = autoListening || voiceBusy || face.speaking;
   const thinking = !loadError && (pending || value.status === "GENERATING");
   const avatarState = speaking ? "speaking" : thinking ? "thinking" : listening ? "listening" : "idle";
   const avatarStatus = speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
-  const action = <Button disabled={busy || voiceBusy || (!loadError && (disabled || waiting || answer.length > 3000 || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
+  const action = <Button disabled={busy || voiceBusy || autoProcessing || (!loadError && (disabled || waiting || answer.length > 3000 || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
     setExpanded(true); if (loadError) void load(); else void run(() => submit());
   }}>
     {loadError ? "重新读取体验状态" : value.status === "LOADING" ? "正在读取…" : pending || value.status === "GENERATING" ? "正在生成，自动恢复进度…" : value.status === "ACTIVE" ? "提交体验回答" : value.status === "AVAILABLE" ? (multi ? "开始五轮训练" : "开始一题体验") : "重试或恢复体验"}<ArrowRight size={16} />
@@ -159,9 +182,17 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
       {!turn && value.status !== "USED" ? action : <span className="practice-badge">{value.report ? "体验已完成" : value.status === "USED" ? "已体验" : `${value.turns?.length || 1} / ${value.maxTurns || 1}`}</span>}
       {live && (
         <div className="practice-room-entry">
-          <button type="button" className="button secondary" aria-haspopup="dialog" onClick={openRoom}>
-            <Maximize2 size={16} aria-hidden="true" />进入面试室
+          <button type="button" className="button secondary" aria-haspopup="dialog" onClick={() => openRoom(false)}>
+            <Maximize2 size={16} aria-hidden="true" />进入面试室{canUseVoiceRoom && "（文字）"}
           </button>
+          {canUseVoiceRoom && (
+            <>
+              <button type="button" className="button" aria-haspopup="dialog" aria-describedby="practice-voice-consent" onClick={() => openRoom(true)}>
+                <Mic size={16} aria-hidden="true" />同意并进入语音面试
+              </button>
+              <small id="practice-voice-consent">说话停顿后，录音会自动发往阿里云百炼转写。可随时暂停麦克风。</small>
+            </>
+          )}
         </div>
       )}
       {turn && <button className="practice-toggle" aria-expanded={expanded} aria-controls="practice-content" onClick={() => setExpanded(!expanded)}>
@@ -196,7 +227,7 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
               aria-label={sound ? "关闭面试官声音" : "开启面试官声音"} title={sound ? "关闭面试官声音" : "开启面试官声音"}
               onClick={() => setSound(!sound)}>{sound ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
             <button type="button" className="round-control" aria-label="重新播报本题" title="重新播报本题"
-              disabled={!speechSupported || !sound || speaking || preparing || voiceBusy || waiting} onClick={() => {
+              disabled={!speechSupported || !sound || speaking || preparing || voiceBusy || autoListening || autoProcessing || waiting} onClick={() => {
                 unlock();
                 speak(prompt, { projectId, turnId: turn.id, exchangeCount: exchanges.length });
               }}><RotateCcw size={18} /></button>
@@ -231,7 +262,28 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
             </ol>
           </section>
         )}
-        {!value.report && <div className="practice-answer"><label>体验回答
+        {handsFree && !value.report && (
+          <>
+            <PracticeConversationVoice
+              projectId={projectId}
+              turnId={turn.id}
+              exchangeCount={exchanges.length}
+              enabled
+              suspended={voiceProps.disabled || value.status !== "ACTIVE" || needsPlayback || speaking || preparing || !!answer.trim()}
+              onUtterance={sendVoice}
+              onListening={setAutoListening}
+              onProcessing={setAutoProcessing}
+            />
+            <div className="practice-answer-actions">
+              <button type="button" className="practice-voice-switch" onClick={switchToText}>改用文字回答</button>
+              {(loadError || value.status === "FAILED") && action}
+            </div>
+            {answer.trim() && (
+              <p className="practice-voice-status">有一段未发送的草稿，可改用文字回答继续编辑。</p>
+            )}
+          </>
+        )}
+        {!value.report && !handsFree && <div className="practice-answer"><label>体验回答
           <textarea aria-label="体验回答" rows={6} maxLength={3000} disabled={busy || disabled || waiting || loadError || submitted} value={answer} onChange={e => edit(e.target.value)} placeholder="从你的职责、具体实现和验证方式说起…" />
         </label>
         {answer.length > 3000 && <p className="practice-error" role="alert">转写已保留，请编辑到 3000 字以内再发送。</p>}
@@ -258,6 +310,11 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
           </button>
         )}
         <div className="practice-answer-actions"><small>{answer.length} / 3000</small>{action}</div>
+        {inRoom && canUseVoiceRoom && !voiceBusy && !answer.trim() && value.status === "ACTIVE" && (
+          <button type="button" className="practice-voice-switch" onClick={() => { unlock(); setVoiceRoom(true); }}>
+            同意录音自动发送至百炼，开始语音面试
+          </button>
+        )}
         </div>}
         {inRoom && <>{messages}{submittedHistory}</>}
         </div>
