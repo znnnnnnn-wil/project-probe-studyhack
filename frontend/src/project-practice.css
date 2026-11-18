@@ -117,6 +117,65 @@
 .practice-answer {
   min-width: 0;
 }
+.practice-cloud-voice {
+  margin-top: 12px;
+}
+.practice-voice-status {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.practice-voice-switch {
+  min-height: 32px;
+  margin-top: 4px;
+  color: var(--blue);
+  font-size: 12px;
+}
+.practice-voice-switch:enabled:hover {
+  text-decoration: underline;
+}
+.practice-dialogue {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+.practice-dialogue h3 {
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+.practice-dialogue-messages {
+  display: grid;
+  gap: 10px;
+  max-height: min(34vh, 350px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.practice-dialogue-messages li {
+  display: grid;
+  gap: 8px;
+}
+.practice-dialogue-messages p {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  background: var(--blue-100);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.practice-dialogue-messages p + p {
+  background: var(--soft);
+}
+.practice-dialogue-messages strong {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
 .practice-answer label {
   font-size: 13px;
   margin: 0;

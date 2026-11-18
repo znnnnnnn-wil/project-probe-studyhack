@@ -11,6 +11,7 @@ import type { Project } from "./types";
 import { EvidenceReview } from "./evidence-review";
 import { PracticeRetest } from "./practice-retest";
 import { ExperienceVoice } from "./experience-voice";
+import { VoiceInput } from "./voice-input";
 import { InterviewerAvatar } from "./interviewer-avatar";
 import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
 import { useFacePresence } from "./use-face-presence";
@@ -28,10 +29,12 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   const roomContent = useRef<HTMLDivElement>(null);
   const roomDialog = useRef<HTMLDialogElement>(null);
   const reportHeading = useRef<HTMLHeadingElement>(null);
+  const transcript = useRef<HTMLOListElement>(null);
   const spokenPrompt = useRef("");
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [sound, setSound] = useState(true);
   const [mediaConfig, setMediaConfig] = useState<{ ttsEnabled?: boolean; speechEnabled?: boolean }>();
+  const [browserVoice, setBrowserVoice] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     api<typeof mediaConfig>("/config", "GET", undefined, controller.signal)
@@ -84,6 +87,7 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   }, [inRoom, roomOpen, practiceSurface]);
   const questionId = turn?.id;
   const exchanges = turn?.exchanges || [];
+  const pendingExchange = value.pendingExchange;
   const prompt = exchanges.at(-1)?.reply || turn?.question || "";
   const promptKey = questionId + ":" + exchanges.length;
   const playbackAllowed = inRoom && sound && !!questionId && !!mediaConfig && speechSupported;
@@ -102,6 +106,9 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   useEffect(() => {
     return stop;
   }, [stop]);
+  useLayoutEffect(() => {
+    if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+  }, [questionId, exchanges.length, pendingExchange]);
   useEffect(() => {
     if (!stageVisible) camera.stop();
   }, [stageVisible, camera.stop]);
@@ -210,10 +217,46 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
             <div className="question-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, ((value.turns?.length || 1) / (value.maxTurns || 1)) * 100)}%` }} /></div>
           </div>}
         </div>
+        {(exchanges.length > 0 || pendingExchange) && (
+          <section className="practice-dialogue" aria-label="本题对话">
+            <h3>本题对话</h3>
+            <ol className="practice-dialogue-messages" ref={transcript} aria-live="polite">
+              {exchanges.map(({ answer: text, reply }, index) => (
+                <li key={index}>
+                  <p><strong>你</strong>{text}</p>
+                  <p><strong>陈老师</strong>{reply}</p>
+                </li>
+              ))}
+              {pendingExchange && <li><p><strong>你</strong>{pendingExchange.answer}</p></li>}
+            </ol>
+          </section>
+        )}
         {!value.report && <div className="practice-answer"><label>体验回答
           <textarea aria-label="体验回答" rows={6} maxLength={3000} disabled={busy || disabled || waiting || loadError || submitted} value={answer} onChange={e => edit(e.target.value)} placeholder="从你的职责、具体实现和验证方式说起…" />
         </label>
-        <ExperienceVoice key={turn.id} {...voiceProps} />
+        {answer.length > 3000 && <p className="practice-error" role="alert">转写已保留，请编辑到 3000 字以内再发送。</p>}
+        {mediaConfig?.speechEnabled && !browserVoice ? (
+          <VoiceInput
+            key={turn.id}
+            projectId={projectId}
+            turnId={turn.id}
+            {...voiceProps}
+            disabled={voiceProps.disabled || value.status !== "ACTIVE"}
+          />
+        ) : <ExperienceVoice key={turn.id} {...voiceProps} />}
+        {mediaConfig && !mediaConfig.speechEnabled && (
+          <p className="practice-voice-status">百炼 ASR 暂未启用，当前使用浏览器识别。</p>
+        )}
+        {mediaConfig?.speechEnabled && (
+          <button
+            className="practice-voice-switch"
+            type="button"
+            disabled={voiceBusy}
+            onClick={() => setBrowserVoice(!browserVoice)}
+          >
+            {browserVoice ? "改用百炼 ASR" : "改用浏览器识别"}
+          </button>
+        )}
         <div className="practice-answer-actions"><small>{answer.length} / 3000</small>{action}</div>
         </div>}
         {inRoom && <>{messages}{submittedHistory}</>}
