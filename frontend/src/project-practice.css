@@ -41,6 +41,20 @@
 .practice-header .button {
   flex-shrink: 0;
 }
+.practice-room-entry {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.practice-room-entry small {
+  flex-basis: 100%;
+  color: var(--muted);
+  text-align: right;
+  font-size: 12px;
+}
 .practice-toggle {
   display: inline-flex;
   align-items: center;
@@ -223,7 +237,8 @@
   line-height: 1.9;
   overflow-wrap: anywhere;
 }
-.practice-card .practice-footnote {
+.practice-card .practice-footnote,
+.practice-room .practice-footnote {
   margin: 0;
   padding: 13px 20px;
   font-size: 12px;
@@ -253,6 +268,136 @@
 .review-choices button { border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 8px 12px; font-size: 12px; background: var(--paper); }
 .review-choices button:hover,
 .review-choices button[aria-pressed="true"] { background: var(--blue-100); border-color: var(--blue); color: var(--blue-deep); }
+
+html:has(.practice-room:modal) {
+  overflow: hidden;
+}
+.practice-room {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+.practice-room[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.practice-room-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px clamp(16px, 3vw, 48px);
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  z-index: 5;
+}
+.practice-room-header > div {
+  min-width: 0;
+}
+.practice-room-header h2 {
+  font-size: clamp(17px, 1.5vw, 22px);
+  line-height: 1.35;
+}
+.practice-room-header p {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.practice-room-header .button {
+  flex: none;
+}
+.practice-room-content {
+  flex: 1;
+  min-height: 0;
+}
+.practice-room-content > div,
+.practice-room .practice-body.is-live {
+  height: 100%;
+}
+.practice-room .practice-body.is-live {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  padding: 0;
+}
+.practice-room .practice-stage-col {
+  gap: 9px;
+  min-height: 0;
+  padding-bottom: 8px;
+  border-right: 1px solid var(--line);
+  background: var(--soft);
+}
+.practice-room .live-stage {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  border-radius: 0;
+}
+.practice-room .control-caption {
+  padding-inline: 12px;
+}
+.practice-room .practice-live-right {
+  min-height: 0;
+  overflow-y: auto;
+  padding: clamp(18px, 3vw, 48px);
+}
+.practice-room .practice-question {
+  padding: clamp(16px, 2vw, 28px);
+}
+.practice-room .practice-question h3 {
+  font-size: clamp(18px, 1.7vw, 28px);
+}
+.practice-room .practice-footnote {
+  padding: 0;
+}
+.practice-room .practice-error {
+  border-radius: var(--r-sm);
+}
+
+@media (max-width: 760px), (max-height: 540px) {
+  .practice-room[open] {
+    overflow-y: auto;
+  }
+  .practice-room-header {
+    position: sticky;
+    top: 0;
+  }
+  .practice-room-content > div,
+  .practice-room .practice-body.is-live {
+    height: auto;
+  }
+  .practice-room .live-stage {
+    min-height: 280px;
+  }
+  .practice-room .practice-live-right {
+    overflow: visible;
+  }
+}
+@media (max-width: 760px) {
+  .practice-room .practice-body.is-live {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .practice-room .practice-stage-col {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .practice-room .live-stage {
+    flex: none;
+    height: clamp(280px, 38svh, 380px);
+  }
+}
+
 @media (max-width: 740px) {
   .practice-header {
     padding: 15px;
@@ -272,6 +417,11 @@
   }
   .practice-header .button {
     width: 100%;
+  }
+  .practice-room-entry,
+  .practice-room-entry small {
+    width: 100%;
+    text-align: left;
   }
   .practice-badge {
     margin-left: 50px;

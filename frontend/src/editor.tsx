@@ -250,7 +250,7 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
           {draftNotice}
         </p>
       )}
-      {id !== "new" && <ProjectPractice projectId={id} disabled={dirty || factsDirty} run={run} busy={busy}
+      {id !== "new" && <ProjectPractice projectId={id} projectName={p.name} disabled={dirty || factsDirty} run={run} busy={busy}
         onSaved={project => {
           setP(project); setDirty(false); setFactsDirty(false);
           sessionStorage.removeItem(draftKey); sessionStorage.removeItem(factDraftKey);

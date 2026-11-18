@@ -105,3 +105,75 @@ test("刷新遇到正在生成只轮询读取，不重复提交", async ({ page 
   await expect(page.getByRole("heading", { name: "请说明预约流程。" })).toBeVisible();
   expect(reads).toBeGreaterThan(1); expect(writes).toBe(0);
 });
+
+test("结束语音输入后等待浏览器的最终文字", async ({ page }) => {
+  const id = "33333333-3333-4333-8333-333333333333";
+  const responses: Record<string, unknown> = {
+    "/api/config": { modelMode: "demo", paymentMode: "mock" },
+    "/api/me": { id: "synthetic", username: "合成用户" },
+    ["/api/projects/" + id]: { id, version: 1, name: "合成项目", responsibility: "接口", resume: "", facts: [] },
+    ["/api/projects/" + id + "/practice"]: {
+      status: "ACTIVE", maxTurns: 5,
+      turns: [{ id: "turn", question: "请说明预约流程。", answer: "" }],
+    },
+    "/api/trainings": [],
+    "/api/shop": { orders: [], packages: [] },
+  };
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname;
+    return route.fulfill({ json: responses[path] ?? null });
+  });
+  await page.addInitScript(() => {
+    let microphone: MediaStream;
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      value: async () => {
+        microphone = new AudioContext().createMediaStreamDestination().stream;
+        return microphone;
+      },
+    });
+    class Recognition {
+      lang = "";
+      onstart?: () => void;
+      onresult?: (event: { results: { 0: { transcript: string }; isFinal: boolean }[] }) => void;
+      onend?: () => void;
+
+      start(track: MediaStreamTrack) {
+        if (track !== microphone.getAudioTracks()[0]) throw new Error("Unexpected audio source");
+        queueMicrotask(() => this.onstart?.());
+      }
+
+      receiveResult = () => {
+        const transcript = this.lang === "en-US" ? "The API uses a unique key." : "预约接口使用唯一键。";
+        this.onresult?.({ results: [{ 0: { transcript }, isFinal: true }] });
+        this.onend?.();
+      };
+
+      stop() {
+        window.addEventListener("test:speech-result", this.receiveResult, { once: true });
+      }
+
+      abort() {
+        window.removeEventListener("test:speech-result", this.receiveResult);
+      }
+    }
+    for (const name of ["SpeechRecognition", "webkitSpeechRecognition"]) {
+      Object.defineProperty(window, name, { value: Recognition, configurable: true });
+    }
+  });
+
+  await page.goto("/#/projects/" + id);
+  await page.getByRole("button", { name: "进入面试室" }).click();
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const answer = room.getByRole("textbox", { name: "体验回答" });
+  await answer.fill("原有草稿");
+  await room.getByRole("combobox", { name: "识别语言" }).selectOption("en-US");
+  await room.getByRole("button", { name: "开始语音输入" }).click();
+  await room.getByRole("button", { name: "结束并填入回答" }).click();
+  await expect(room.getByText("正在接收识别结果")).toBeVisible();
+  await expect(answer).toHaveValue("原有草稿");
+
+  await page.evaluate(() => window.dispatchEvent(new Event("test:speech-result")));
+  await expect(answer).toHaveValue("原有草稿\nThe API uses a unique key.");
+  await expect(room.getByText("语音已填入回答")).toBeVisible();
+});
+
