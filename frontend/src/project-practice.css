@@ -176,6 +176,15 @@
   color: var(--muted);
   font-size: 12px;
 }
+.practice-conversation-voice {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+}
+.practice-conversation-voice p {
+  margin: 0;
+}
 .practice-answer label {
   font-size: 13px;
   margin: 0;
