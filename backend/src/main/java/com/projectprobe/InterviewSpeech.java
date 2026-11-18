@@ -20,7 +20,7 @@ public class InterviewSpeech {
   final Store s;
   final ModelService model;
   final InputService inputs;
-  final ProjectService projects;
+  final ProjectPractice practice;
   final HttpClient client = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(8))
     .build();
@@ -49,11 +49,11 @@ public class InterviewSpeech {
   @Value("${app.tts-daily-limit:60}")
   int dailyLimit;
 
-  InterviewSpeech(Store s, ModelService model, InputService inputs, ProjectService projects) {
+  InterviewSpeech(Store s, ModelService model, InputService inputs, ProjectPractice practice) {
     this.s = s;
     this.model = model;
     this.inputs = inputs;
-    this.projects = projects;
+    this.practice = practice;
   }
 
   String key() {
@@ -79,20 +79,10 @@ public class InterviewSpeech {
     );
   }
 
-  void speak(String user, String projectId, String turnId, HttpServletResponse response) {
+  void speak(String user, String projectId, String turnId, Object exchangeCount, HttpServletResponse response) {
     if (!ttsReady()) throw error(503, "面试官语音暂未配置，将使用浏览器播报");
-    projects.get(user, projectId);
-    var rows = s.db.queryForList("SELECT * FROM project_trials WHERE user_id=?", user);
-    if (rows.isEmpty()) throw error(409, "当前没有进行中的训练，请先开始训练");
-    var row = rows.get(0);
-    if (!projectId.equals(row.get("project_id")) || !"ACTIVE".equals(row.get("status")))
-      throw error(409, "本题已结束，请重新加载当前问题");
-    var turns = list(s.decode(row.get("body")), "turns");
-    if (turns.isEmpty()) throw error(409, "本题已结束，请重新加载当前问题");
-    var turn = turns.get(turns.size() - 1);
-    if (!str(turn, "id").equals(turnId) || !str(turn, "answer").isBlank())
-      throw error(409, "本题已结束，请重新加载当前问题");
-    String text = str(turn, "question");
+    var turn = practice.requireUnansweredTurn(user, projectId, turnId, exchangeCount);
+    String text = PracticeDialogue.currentPrompt(turn);
     if (text.isBlank() || text.length() > 300) throw error(409, "当前问题不支持语音播报");
     inputs.limited(user, "TTS", Math.max(1, Math.min(dailyLimit, 200)), () -> {
       synthesize(text, response);

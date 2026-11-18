@@ -50,6 +50,9 @@ class InputRegressionTest {
   ProjectService projects;
 
   @Autowired
+  ProjectPractice practice;
+
+  @Autowired
   PaymentService payments;
 
   @Autowired
@@ -1042,5 +1045,39 @@ class InputRegressionTest {
           .header("Origin", "http://localhost:5173")
       )
       .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void practiceSpeechEndpointRequiresAnUnansweredTurnOwnedByTheUser() throws Exception {
+    String origin = "http://localhost:5173";
+    var ownerResponse = new org.springframework.mock.web.MockHttpServletResponse();
+    var otherResponse = new org.springframework.mock.web.MockHttpServletResponse();
+    String owner = str(auth.login(Map.of("username", "practice-asr-" + id(), "password", "synthetic-input-password"), true, ownerResponse), "id");
+    auth.login(Map.of("username", "practice-asr-" + id(), "password", "synthetic-input-password"), true, otherResponse);
+    String projectId = str(projects.save(owner, null, Map.of("name", "合成项目", "responsibility", "我负责接口")), "id");
+    String url = "/api/projects/" + projectId + "/practice/transcribe";
+    var recording = file("answer.wav", wav(16000, 7));
+    var ownerCookie = ownerResponse.getCookie("probe_session");
+
+    mvc.perform(multipart(url).file(recording).param("turnId", id()).header("Origin", origin))
+      .andExpect(status().isUnauthorized());
+    mvc.perform(multipart(url).file(recording).param("turnId", id()).cookie(ownerCookie).header("Origin", origin))
+      .andExpect(status().isConflict());
+
+    var current = practice.run(owner, projectId, Map.of());
+    String turnId = str(list(current, "turns").get(0), "id");
+    mvc.perform(multipart(url).file(recording).param("turnId", turnId)
+        .cookie(otherResponse.getCookie("probe_session")).header("Origin", origin))
+      .andExpect(status().isNotFound());
+    mvc.perform(multipart(url).file(recording).param("turnId", id()).cookie(ownerCookie).header("Origin", origin))
+      .andExpect(status().isConflict());
+    mvc.perform(multipart(url).file(recording).content(recording.getBytes())
+        .param("turnId", turnId).cookie(ownerCookie).header("Origin", origin))
+      .andExpect(status().isServiceUnavailable());
+    assertEquals(current, practice.get(owner, projectId));
+
+    practice.run(owner, projectId, Map.of("turnId", turnId, "answer", "这是一条已提交的合成回答。"));
+    mvc.perform(multipart(url).file(recording).param("turnId", turnId).cookie(ownerCookie).header("Origin", origin))
+      .andExpect(status().isConflict());
   }
 }
