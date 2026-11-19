@@ -7,9 +7,10 @@ import type { Practice, Retest } from "./use-project-practice";
 type Target = { index: number; finding: Finding; evidence: Finding["evidence"][number] };
 
 export function PracticeRetest({
-  projectId, report, retest, disabled, onChange, reload,
+  projectId, roundId, report, retest, disabled, onChange, reload,
 }: {
   projectId: string;
+  roundId?: string;
   report: Report;
   retest?: Retest;
   disabled: boolean;
@@ -38,6 +39,7 @@ export function PracticeRetest({
         findingIndex: current.index,
         turnId: current.evidence.turnId,
         answer: retest?.answer ?? answer,
+        roundId,
       }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "复测失败，请重试");

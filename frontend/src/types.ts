@@ -87,7 +87,6 @@ export type Training = {
   createdAt: number;
   error?: string;
   interviewFacts: Fact[];
-  packageId: string;
   planVersion?: number;
   reportPlan?: {
     taskIndex: number;
@@ -99,8 +98,6 @@ export type Training = {
     state: "AVAILABLE" | "CONTINUE" | "COMPLETED" | "UNAVAILABLE";
     trainingId?: string;
     trainingStatus?: string;
-    packageId: string;
-    returned?: boolean;
   };
 };
 export type TrainingSummary = Pick<
@@ -115,7 +112,6 @@ export type TrainingSummary = Pick<
   | "focus"
   | "parentId"
   | "retestEntry"
-  | "packageId"
   | "leaseUntil"
 > & {
   project: Pick<Project, "id" | "name">;

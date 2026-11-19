@@ -16,15 +16,17 @@ import { PracticeConversationVoice } from "./practice-conversation-voice";
 import { InterviewerAvatar } from "./interviewer-avatar";
 import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
 import { useFacePresence } from "./use-face-presence";
-import { api } from "./api";
+import { api, go } from "./api";
 import "./experience-report.css";
 
-export function ProjectPractice({ projectId, projectName, disabled, onSaved, onReview, run, busy }: Actions & {
-  projectId: string; projectName: string; disabled: boolean; onSaved: (project: Project) => void; onReview: () => void;
+export function ProjectPractice({ projectId, projectName, roundId, openOnLoad, disabled, onSaved, onEditMaterials, run, busy }: Actions & {
+  projectId: string; projectName: string; roundId?: string; openOnLoad?: boolean; disabled: boolean; onSaved: (project: Project) => void; onEditMaterials: () => void;
 }) {
-  const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, accept } = useProjectPractice(projectId);
+  const { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, acceptRetest } = useProjectPractice(projectId, roundId);
   const [expanded, setExpanded] = useState(true);
-  const [roomOpen, setRoomOpen] = useState(false);
+  const [roomOpen, setRoomOpen] = useState(!!openOnLoad && !roundId);
+  const [topic, setTopic] = useState("");
+  const roomHadQuestion = useRef(false);
   const [voiceRoom, setVoiceRoom] = useState(false);
   const [practiceSurface] = useState(() => document.createElement("div"));
   const inlineContent = useRef<HTMLDivElement>(null);
@@ -54,13 +56,12 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   const camera = useCameraPreview();
   const { presence, snapshot: face } = useFacePresence(camera.on ? camera.stream : null);
   const turn = value.turns?.at(-1);
-  const multi = (value.maxTurns || 1) > 1;
   const waiting = pending || ["LOADING", "GENERATING"].includes(value.status);
-  const live = !!turn && !value.report && value.status !== "USED";
-  const inRoom = roomOpen && live;
-  const canUseVoiceRoom = multi && !!mediaConfig?.speechEnabled;
+  const live = !!turn && !value.report && !roundId;
+  const inRoom = roomOpen && !roundId;
+  const canUseVoiceRoom = !!mediaConfig?.speechEnabled;
   const handsFree = inRoom && voiceRoom && canUseVoiceRoom;
-  const stageVisible = live && expanded;
+  const stageVisible = inRoom || (live && expanded);
   const openRoom = (voice: boolean) => {
     unlock();
     setExpanded(true);
@@ -68,6 +69,7 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
     setRoomOpen(true);
   };
   const closeRoom = () => {
+    camera.stop();
     stop();
     setAutoListening(false);
     setAutoProcessing(false);
@@ -98,16 +100,21 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
     const destination = inRoom ? roomContent.current : inlineContent.current;
     // Keep the canvas, answer field and active media mounted in both views.
     if (destination && practiceSurface.parentElement !== destination) destination.append(practiceSurface);
+    if (inRoom && live) roomHadQuestion.current = true;
+    if (inRoom && value.report && roomHadQuestion.current) {
+      roomHadQuestion.current = false;
+      setRoomOpen(false);
+      setVoiceRoom(false);
+      setTopic("");
+    }
     if (inRoom) {
       if (!dialog.open) dialog.showModal();
     } else {
       if (dialog.open) dialog.close();
-      if (roomOpen) {
-        setRoomOpen(false);
-        reportHeading.current?.focus();
-      }
+      if (roomHadQuestion.current || value.report) reportHeading.current?.focus();
+      roomHadQuestion.current = false;
     }
-  }, [inRoom, roomOpen, practiceSurface]);
+  }, [inRoom, live, value.report, practiceSurface]);
   const questionId = turn?.id;
   const exchanges = turn?.exchanges || [];
   const pendingExchange = value.pendingExchange;
@@ -142,7 +149,7 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
   const action = <Button disabled={busy || voiceBusy || autoProcessing || (!loadError && (disabled || waiting || answer.length > 3000 || (value.status === "ACTIVE" && !answer.trim())))} onClick={() => {
     setExpanded(true); if (loadError) void load(); else void run(() => submit());
   }}>
-    {loadError ? "重新读取体验状态" : value.status === "LOADING" ? "正在读取…" : pending || value.status === "GENERATING" ? "正在生成，自动恢复进度…" : value.status === "ACTIVE" ? "提交体验回答" : value.status === "AVAILABLE" ? (multi ? "开始五轮训练" : "开始一题体验") : "重试或恢复体验"}<ArrowRight size={16} />
+    {loadError ? "重新读取训练状态" : value.status === "LOADING" ? "正在读取…" : pending || value.status === "GENERATING" ? "正在生成，自动恢复进度…" : value.status === "ACTIVE" ? "提交回答" : value.status === "AVAILABLE" ? "开始五轮训练" : "重试或恢复训练"}<ArrowRight size={16} />
   </Button>;
   const exportPractice = () => {
     const report = value.report;
@@ -165,21 +172,25 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const answeredTurns = value.turns?.filter(t => t.answer) || [];
-  const submittedHistory = (value.turns?.length || 0) > 1 && <details className="practice-footnote">
+  const submittedHistory = answeredTurns.length > 0 && <details className="practice-footnote">
     <summary>查看本轮已提交问答（{answeredTurns.length}）</summary>
     {answeredTurns.map(t => <article key={t.id}><h4>{t.question}</h4><p style={{ whiteSpace: "pre-wrap" }}>{t.answer}</p></article>)}
   </details>;
   const messages = <>
-    {disabled && value.status !== "USED" && <p className="practice-footnote">请先保存当前材料或事实核对修改，再继续体验。</p>}
+    {disabled && !roundId && <p className="practice-footnote">请先保存项目材料，再继续训练。</p>}
     {notice && <p className="practice-footnote" role="status">{notice}</p>}
     {error && <p className="practice-error" role="alert">{error}</p>}
   </>;
-  return <><section id="project-practice" className="practice-card" aria-label={multi ? "我的项目五轮训练" : "我的项目一题体验"}>
+  return <><section id="project-practice" className="practice-card" aria-label="我的项目五轮训练">
     <div className="practice-header">
       <span className="practice-icon"><Sparkles size={22} strokeWidth={1.6} /></span>
-      <div className="practice-heading"><h2>{multi ? "围绕你的项目，连续追问五轮" : "先用自己的项目体验一题"}</h2>
-        <p>每账号一轮免费训练，使用已保存的项目材料；无需购买。</p></div>
-      {!turn && value.status !== "USED" ? action : <span className="practice-badge">{value.report ? "体验已完成" : value.status === "USED" ? "已体验" : `${value.turns?.length || 1} / ${value.maxTurns || 1}`}</span>}
+      <div className="practice-heading"><h2>{roundId && value.roundNumber ? `第 ${value.roundNumber} 轮训练` : "项目训练"}</h2></div>
+      {roundId && <Button secondary onClick={() => go("/projects/" + projectId)}>返回当前训练</Button>}
+      {turn && <span className="practice-badge">{value.report ? "已完成" : `${value.turns?.length || 1} / ${value.maxTurns || 1}`}</span>}
+      {!inRoom && loadError && !turn && action}
+      {!roundId && !live && !value.report && <Button onClick={() => openRoom(false)}>
+        <Maximize2 size={16} /> 进入面试室
+      </Button>}
       {live && (
         <div className="practice-room-entry">
           <button type="button" className="button secondary" aria-haspopup="dialog" onClick={() => openRoom(false)}>
@@ -196,14 +207,13 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
         </div>
       )}
       {turn && <button className="practice-toggle" aria-expanded={expanded} aria-controls="practice-content" onClick={() => setExpanded(!expanded)}>
-        {expanded ? "收起体验" : "展开体验"}{expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+        {expanded ? "收起训练" : "展开训练"}{expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
       </button>}
     </div>
     <div id="practice-content" hidden={!expanded}>
-    {value.status === "USED" && <p className="practice-footnote">本账号已完成免费训练，请回到首次训练的项目查看记录与复盘。</p>}
-    {value.status !== "USED" && !inRoom && submittedHistory}
+    {!inRoom && submittedHistory}
     <div ref={inlineContent} />
-    {createPortal(value.status !== "USED" && turn && <div className={"practice-body" + (value.report ? " is-completed" : stageVisible ? " is-live" : "")}>
+    {createPortal((inRoom || turn) && <div className={"practice-body" + (stageVisible ? " is-live" : " is-completed")}>
         {stageVisible && <div className="practice-stage-col">
           <div className="live-stage">
             <InterviewerAvatar state={avatarState} mouthLevel={mouthLevel} presence={presence} />
@@ -227,7 +237,8 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
               aria-label={sound ? "关闭面试官声音" : "开启面试官声音"} title={sound ? "关闭面试官声音" : "开启面试官声音"}
               onClick={() => setSound(!sound)}>{sound ? <Volume2 size={19} /> : <VolumeX size={19} />}</button>
             <button type="button" className="round-control" aria-label="重新播报本题" title="重新播报本题"
-              disabled={!speechSupported || !sound || speaking || preparing || voiceBusy || autoListening || autoProcessing || waiting} onClick={() => {
+              disabled={!turn || !live || !speechSupported || !sound || speaking || preparing || voiceBusy || autoListening || autoProcessing || waiting} onClick={() => {
+                if (!turn) return;
                 unlock();
                 speak(prompt, { projectId, turnId: turn.id, exchangeCount: exchanges.length });
               }}><RotateCcw size={18} /></button>
@@ -240,15 +251,39 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
           <p className="control-caption">摄像头仅用于本机预览和动作识别。</p>
         </div>}
         <div className="practice-live-right">
-        <div className="practice-question"><span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
+        {inRoom && !live ? (
+          <form className="practice-question practice-setup" onSubmit={event => {
+            event.preventDefault();
+            if (disabled || busy || waiting || loadError) return;
+            unlock();
+            void run(() => submit(undefined, !!value.report, topic));
+          }}>
+            <h3>{value.report ? "开始新一轮" : "开始项目面试"}</h3>
+            {loadError ? action : <>
+              {(!value.roundId || value.report) && <label>
+                面试主题（选填）
+                <input value={topic} maxLength={200} disabled={busy || waiting}
+                  onChange={event => setTopic(event.target.value)}
+                  placeholder="例如：任务调度的故障恢复" />
+                <small>留空时，面试官会根据项目材料出题。</small>
+              </label>}
+              <Button type="submit" disabled={disabled || busy || waiting || value.retest?.status === "GENERATING"}>
+                {waiting ? "正在准备…" : value.status === "FAILED" && !value.report
+                  ? "重试或恢复训练" : "开始五轮训练"}
+                <ArrowRight size={16} />
+              </Button>
+            </>}
+          </form>
+        ) : turn && <div className="practice-question"><span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
           <h3>{turn.question}</h3>
+          {value.interviewTopic && <p>本轮主题：{value.interviewTopic}</p>}
           <p>结合你实际负责的部分回答；没有做过或尚未验证的内容，可以直接说明。</p>
           {value.modelMode && <small>{value.modelMode === "demo" ? "规则演示，非AI评估" : "真实AI反馈，技术建议仍需核对"}</small>}
           {!value.report && <div className="question-progress-row"><span>第 {value.turns?.length || 1} / {value.maxTurns || 1} 题</span>
             <div className="question-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, ((value.turns?.length || 1) / (value.maxTurns || 1)) * 100)}%` }} /></div>
           </div>}
-        </div>
-        {(exchanges.length > 0 || pendingExchange) && (
+        </div>}
+        {live && (exchanges.length > 0 || pendingExchange) && (
           <section className="practice-dialogue" aria-label="本题对话">
             <h3>本题对话</h3>
             <ol className="practice-dialogue-messages" ref={transcript} aria-live="polite">
@@ -262,7 +297,7 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
             </ol>
           </section>
         )}
-        {handsFree && !value.report && (
+        {handsFree && live && turn && (
           <>
             <PracticeConversationVoice
               projectId={projectId}
@@ -283,8 +318,8 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
             )}
           </>
         )}
-        {!value.report && !handsFree && <div className="practice-answer"><label>体验回答
-          <textarea aria-label="体验回答" rows={6} maxLength={3000} disabled={busy || disabled || waiting || loadError || submitted} value={answer} onChange={e => edit(e.target.value)} placeholder="从你的职责、具体实现和验证方式说起…" />
+        {live && turn && !handsFree && <div className="practice-answer"><label>我的回答
+          <textarea aria-label="我的回答" rows={6} maxLength={3000} disabled={busy || disabled || waiting || loadError || submitted} value={answer} onChange={e => edit(e.target.value)} placeholder="从你的职责、具体实现和验证方式说起…" />
         </label>
         {answer.length > 3000 && <p className="practice-error" role="alert">转写已保留，请编辑到 3000 字以内再发送。</p>}
         {mediaConfig?.speechEnabled && !browserVoice ? (
@@ -319,8 +354,14 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
         {inRoom && <>{messages}{submittedHistory}</>}
         </div>
       </div>, practiceSurface)}
-      {value.status !== "USED" && value.report && <div className="practice-feedback"><h3 ref={reportHeading} tabIndex={-1}>针对你的回答</h3>
-        <Button secondary onClick={exportPractice}><Download size={15} />导出本轮复盘</Button>
+      {value.report && <div className="practice-feedback"><h3 ref={reportHeading} tabIndex={-1}>针对你的回答</h3>
+        <div className="action-row">
+          <Button secondary onClick={exportPractice}><Download size={15} />导出本轮复盘</Button>
+          {!roundId && !!value.roundId && <Button disabled={busy || disabled || waiting || loadError || value.retest?.status === "GENERATING"}
+            onClick={() => openRoom(false)}>
+            {pending ? "正在开始…" : "开始新一轮"} <ArrowRight size={15} />
+          </Button>}
+        </div>
         <ul className="practice-strengths">{value.report.clearParts.map((s, i) => <li key={i}><Check size={15} />{s}</li>)}</ul>
         <div className="practice-findings">{value.report.findings.map((f, i) => <article key={i}>
           <span className="practice-kicker">改进方向 {String(i + 1).padStart(2, "0")}</span><h4>{f.topic}</h4>
@@ -328,15 +369,14 @@ export function ProjectPractice({ projectId, projectName, disabled, onSaved, onR
           <EvidenceReview finding={f} />
           {f.evidence.length > 0 && <details><summary>查看回答依据</summary>{f.evidence.map((e, n) => <blockquote key={e.turnId + n}>{e.quote}</blockquote>)}</details>}
         </article>)}</div>
-        <PracticeRetest projectId={projectId} report={value.report} retest={value.retest}
-          disabled={disabled || busy || loadError} onChange={accept} reload={load} />
+        <PracticeRetest projectId={projectId} roundId={value.roundId ?? roundId} report={value.report} retest={value.retest}
+          disabled={disabled || busy || loadError} onChange={acceptRetest} reload={load} />
         <p className="practice-footnote">复盘只使用本轮已提交的回答。补充说明属于你的自述，仍需结合代码与测试核对。</p>
         <PracticeNext projectId={projectId} answer={value.turns?.map(t => t.answer).filter(Boolean).join("\n\n") || ""} disabled={disabled}
-          onSaved={onSaved} onReview={onReview} run={run} busy={busy} />
+          onSaved={onSaved} onEditMaterials={onEditMaterials} run={run} busy={busy} />
         <PracticeReview projectId={projectId} run={run} busy={busy} />
       </div>}
       {!inRoom && messages}
-      {value.status !== "USED" && !turn && <p className="practice-footnote">体验不能代替完整事实核对与训练。</p>}
     </div>
   </section>
   <dialog
