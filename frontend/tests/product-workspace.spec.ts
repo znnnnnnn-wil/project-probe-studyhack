@@ -50,13 +50,12 @@ for (const viewport of [
       fullPage: true,
     });
     await page.getByRole("link", { name: "编辑材料", exact: true }).click();
-    await page.getByRole("button", { name: "展开技术栈、实现与验证等补充材料" }).click();
     await page
-      .getByLabel("验证方式", { exact: true })
+      .getByLabel("项目经历")
       .fill("未保存的合成验证笔记");
     page.on("dialog", (dialog) => dialog.accept());
     await page.reload();
-    await expect(page.getByLabel("验证方式", { exact: true })).toHaveValue(
+    await expect(page.getByLabel("项目经历")).toHaveValue(
       "未保存的合成验证笔记",
     );
     await expect(page.getByRole("status")).toContainText(
@@ -153,9 +152,12 @@ test("未登录示例不发出写入请求，登录后回到原页面", async ({
     if (r.method() === "POST") writes.push(r.url());
   });
   await page.goto("/");
-  await page.getByLabel("体验回答").fill("我需要核对检查和写入的并发边界。");
-  await page.getByRole("button", { name: "查看复盘角度" }).click();
-  await expect(page.locator(".sample-feedback")).toContainText("固定场景");
+  await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
+  await page.getByRole("button", { name: "开始五轮练习", exact: true }).click();
+  const answer = page.getByLabel("本轮回答");
+  await answer.fill("我需要核对检查和写入的并发边界。");
+  await page.getByRole("button", { name: "保存回答，继续追问" }).click();
+  await expect(answer).toHaveValue("");
   expect(writes).toEqual([]);
   await page.goto("/#/projects/new");
   await page
