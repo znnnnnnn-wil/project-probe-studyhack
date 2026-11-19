@@ -35,7 +35,7 @@ class PracticeRetest {
       var retest = object(training.get("retest"));
       if ("COMPLETED".equals(retest.get("status"))) return new Generation(roundId, null);
       long lease = ((Number) training.get("leaseUntil")).longValue();
-      if (lease > now()) throw error(409, "复测报告正在生成，请稍后查看");
+      if (lease > now()) throw error(409, "本场评分或专项复测正在生成，请稍后再试");
       if (!str(training, "modelMode").equals(model.mode)) {
         throw error(409, "当前服务的反馈模式与原训练不同，请恢复原模式后复测");
       }
