@@ -12,39 +12,25 @@ public class TrainingService {
   final Store s;
   final ProjectService projects;
   final ModelService model;
-  final PaymentService payments;
   final TrainingHistory history;
 
-  @org.springframework.beans.factory.annotation.Autowired
   TrainingService(
     Store s,
     ProjectService projects,
-    ModelService model,
-    PaymentService payments
+    ModelService model
   ) {
     this.s = s;
     this.projects = projects;
     this.model = model;
-    this.payments = payments;
-    this.history = new TrainingHistory(s, payments);
-  }
-
-  TrainingService(Store s, ProjectService projects, ModelService model) {
-    this(s, projects, model, new PaymentService(s, new PaymentSettings()));
+    this.history = new TrainingHistory(s);
   }
 
   Map<String, Object> row(String user, String id) {
-    var row = s.one(
+    return s.one(
       "SELECT * FROM trainings WHERE id=? AND user_id=?",
       id,
       user
     );
-    var order = s.one(
-      "SELECT o.* FROM purchase_orders o JOIN training_packages p ON p.order_id=o.id WHERE p.id=?",
-      row.get("package_id")
-    );
-    payments.requireScope(order);
-    return row;
   }
 
   Map<String, Object> get(String user, String id) {
@@ -56,7 +42,9 @@ public class TrainingService {
     b.put("leaseUntil", r.get("lease_until"));
     b.put("createdAt", r.get("created_at"));
     if (r.get("history_key") != null) b.put("historyKey", r.get("history_key"));
-    b.put("packageId", r.get("package_id"));
+    b.remove("packageId");
+    if ("FAILED".equals(r.get("status")) && str(b, "error").contains("权益"))
+      b.put("error", "生成失败，进度已保存，可以重试。");
     if (
       "DEEP".equals(r.get("kind")) && "COMPLETED".equals(r.get("status"))
     ) b.put("retestEntry", retestEntry(user, r));
@@ -64,69 +52,24 @@ public class TrainingService {
   }
 
   Map<String, Object> retestEntry(String user, Map<String, Object> deep) {
-    var pack = s.one(
-      "SELECT * FROM training_packages WHERE id=? AND user_id=?",
-      deep.get("package_id"),
-      user
-    );
-    var sourceOrder = s.one(
-      "SELECT * FROM purchase_orders WHERE id=?",
-      pack.get("order_id")
-    );
-    payments.requireScope(sourceOrder);
-    if (!"PAID".equals(sourceOrder.get("status"))) return Map.of(
-      "state",
-      "UNAVAILABLE",
-      "packageId",
-      pack.get("id")
-    );
-    // 新套餐可为旧报告续费；仍按父训练定位已有复测，避免重复扣次。
     var children = s.db.queryForList(
-      "SELECT t.id,t.status,t.package_id FROM trainings t JOIN training_packages p ON p.id=t.package_id JOIN purchase_orders o ON o.id=p.order_id WHERE t.user_id=? AND t.parent_id=? AND t.kind='RETEST' AND o.mode=? AND (o.account_scope=? OR (o.mode='mock' AND o.account_scope='legacy')) ORDER BY t.created_at DESC,t.id DESC",
-      user,
-      deep.get("id"),
-      payments.mode,
-      payments.scope()
+      "SELECT id,status FROM trainings WHERE user_id=? AND parent_id=? AND kind='RETEST' ORDER BY created_at DESC,id DESC",
+      user, deep.get("id")
     );
-    children.sort(Comparator.comparing(c -> "COMPLETED".equals(c.get("status"))));
-    for (var child : children) {
-      String status = str(child, "status");
-      if (!"REFUNDED".equals(status)) return Map.of(
-        "state",
-        "COMPLETED".equals(status) ? "COMPLETED" : "CONTINUE",
-        "trainingId",
-        child.get("id"),
-        "trainingStatus",
-        status,
-        "packageId",
-        child.get("package_id")
-      );
-    }
-    boolean available =
-      PaymentService.available(pack, "RETEST") &&
-      (!PaymentService.legacy(pack) ||
-        deep.get("id").equals(pack.get("deep_training_id")));
-    if (!available) available = sharedFunding(user) != null;
-    return Map.of(
-      "state",
-      available ? "AVAILABLE" : "UNAVAILABLE",
-      "returned",
-      !children.isEmpty(),
-      "packageId",
-      pack.get("id")
-    );
+    return retestEntry(children);
   }
 
-  Map<String, Object> sharedFunding(String user) {
-    return payments
-      .packages(user)
-      .stream()
-      .filter(
-        p -> !PaymentService.legacy(p) && PaymentService.available(p, "RETEST")
-      )
-      .sorted(Comparator.comparing(p -> !Boolean.TRUE.equals(p.get("lifetime"))))
+  static Map<String, Object> retestEntry(List<Map<String, Object>> children) {
+    return children.stream()
+      .filter(child -> !"REFUNDED".equals(child.get("status")))
+      .sorted(Comparator.comparing(child -> "COMPLETED".equals(child.get("status"))))
       .findFirst()
-      .orElse(null);
+      .<Map<String, Object>>map(child -> Map.of(
+        "state", "COMPLETED".equals(child.get("status")) ? "COMPLETED" : "CONTINUE",
+        "trainingId", child.get("id"),
+        "trainingStatus", child.get("status")
+      ))
+      .orElseGet(() -> Map.of("state", "AVAILABLE"));
   }
 
   List<Map<String, Object>> all(String user) {
@@ -134,7 +77,7 @@ public class TrainingService {
   }
 
   List<Map<String, Object>> all(String user, boolean summary) {
-    return new TrainingCatalog(s, payments).all(user, summary);
+    return new TrainingCatalog(s).all(user, summary);
   }
 
   void update(String id, String status, Map<String, Object> body) {
@@ -215,70 +158,22 @@ public class TrainingService {
       String historyKey = TrainingHistory.key(project, projectId);
       String parent = str(input, "parentId"),
         kind = parent.isBlank() ? "DEEP" : "RETEST";
-      Map<String, Object> pack;
       Map<String, Object> parentBody = null;
-      if (kind.equals("DEEP")) {
-        var packs = payments
-          .packages(user)
-          .stream()
-          .filter(p -> PaymentService.available(p, "DEEP"))
-          .sorted(
-            Comparator.comparing(p -> !Boolean.TRUE.equals(p.get("lifetime")))
-          )
-          .toList();
-        if (packs.isEmpty()) throw error(
-          409,
-          "没有可用的深挖次数，请先获取训练包"
-        );
-        pack = packs.get(0);
-      } else {
+      if (kind.equals("RETEST")) {
         var p = row(user, parent);
         if (
           !"COMPLETED".equals(p.get("status")) ||
           !"DEEP".equals(p.get("kind")) ||
           !projectId.equals(p.get("project_id"))
         ) throw error(400, "复测必须关联本项目已完成的深挖训练");
-        pack = s.one(
-          "SELECT * FROM training_packages WHERE id=? AND user_id=? FOR UPDATE",
-          p.get("package_id"),
-          user
-        );
-        var sourceOrder = s.one(
-          "SELECT * FROM purchase_orders WHERE id=?",
-          pack.get("order_id")
-        );
-        payments.requireScope(sourceOrder);
-        if (!"PAID".equals(sourceOrder.get("status"))) throw error(
-          409,
-          "该订单需要支付复核，暂不能使用复测权益"
-        );
         var entry = retestEntry(user, p);
         if (
           "CONTINUE".equals(entry.get("state")) ||
           ("COMPLETED".equals(entry.get("state")) && !Boolean.TRUE.equals(input.get("newRound")))
         ) return get(user, str(entry, "trainingId"));
-        // 永久权益优先，旧报告的剩余次数包不应继续被扣减。
-        var unlimited = sharedFunding(user);
-        if (unlimited != null && Boolean.TRUE.equals(unlimited.get("lifetime"))) pack = unlimited;
-        if (
-          !PaymentService.available(pack, "RETEST") ||
-          (PaymentService.legacy(pack) &&
-            !parent.equals(pack.get("deep_training_id")))
-        ) {
-          pack = sharedFunding(user);
-          if (pack == null) throw error(
-            409,
-            "没有可用的复测次数，请先获取训练套餐"
-          );
-        }
         parentBody = s.decode(p.get("body"));
       }
-      if (!Boolean.TRUE.equals(project.get("factsConfirmed"))) throw error(
-        400,
-        "请先提取并核对项目事实"
-      );
-      String id = id(),
-        packageId = str(pack, "id");
+      String id = id();
       var body = new LinkedHashMap<String, Object>();
       String exercise = str(input, "exerciseMode"), difficulty = str(input, "difficulty");
       if (exercise.isBlank()) exercise = "STANDARD";
@@ -288,7 +183,11 @@ public class TrainingService {
         throw error(400, "训练模式或难度不正确");
       body.put("exerciseMode", exercise);
       body.put("difficulty", difficulty);
-      body.put("project", project);
+      var projectSnapshot = new LinkedHashMap<>(project);
+      projectSnapshot.put("facts", list(project, "facts").stream()
+        .filter(fact -> Boolean.TRUE.equals(fact.get("confirmed")))
+        .toList());
+      body.put("project", projectSnapshot);
       body.put("historyKey", historyKey);
       body.putAll(history.context(user, projectId, historyKey, ""));
       body.put("kind", kind);
@@ -314,11 +213,10 @@ public class TrainingService {
         kind.equals("RETEST") ? "FIRST_QUESTION" : "FIRST_DEEP_QUESTION"
       );
       s.db.update(
-        "INSERT INTO trainings(id,user_id,project_id,package_id,request_key,kind,parent_id,status,body,created_at,history_key) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO trainings(id,user_id,project_id,request_key,kind,parent_id,status,body,created_at,history_key) VALUES (?,?,?,?,?,?,?,?,?,?)",
         id,
         user,
         projectId,
-        packageId,
         requestKey,
         kind,
         parent.isBlank() ? null : parent,
@@ -328,30 +226,9 @@ public class TrainingService {
         historyKey
       );
       if (journey != null) journey.record(user, kind.equals("RETEST") ? "RETEST_STARTED" : "TRAINING_STARTED", id);
-      if (!PaymentService.legacy(pack)) s.db.update(
-        "UPDATE training_packages SET training_used=training_used+1 WHERE id=?",
-        packageId
-      );
-      else if (kind.equals("DEEP")) s.db.update(
-        "UPDATE training_packages SET deep_used=TRUE,deep_training_id=? WHERE id=?",
-        id,
-        packageId
-      );
-      else s.db.update(
-        "UPDATE training_packages SET retest_used=TRUE WHERE id=?",
-        packageId
-      );
-      s.db.update(
-        "INSERT INTO entitlement_events VALUES (?,?,?,?,?)",
-        id(),
-        packageId,
-        id,
-        "RESERVED",
-        now()
-      );
       return get(user, id);
     });
-    // 先持久化训练及权益预留，再在事务外调用模型，失败保留可恢复入口。
+    // 先持久化训练，再在事务外调用模型，失败保留可恢复入口。
     if ("PENDING".equals(training.get("status"))) {
       try {
         return generate(user, str(training, "id"));
@@ -601,70 +478,16 @@ public class TrainingService {
             "FIRST_DEEP_QUESTION"
           ).contains(str(saved, "operation"));
           String savedMessage = first
-            ? "首题生成失败，训练记录已保存。可重试生成或返还本次权益。"
-            : "生成失败，回答已保存。可重试生成或返还本次权益。";
-          saved.put(
-            "error",
-            e instanceof
-              org.springframework.web.server.ResponseStatusException response &&
-              ModelService.FREE_QUOTA_ERROR.equals(response.getReason())
-              ? ModelService.FREE_QUOTA_ERROR +
-                  (first
-                    ? "。训练记录已保存，可恢复训练或返还本次权益。"
-                    : "。回答已保存，可恢复训练或返还本次权益。")
-              : savedMessage
-          );
+            ? "首题生成失败，训练记录已保存，可以重试。"
+            : "生成失败，回答已保存，可以重试。";
+          saved.put("error", savedMessage);
           update(id, "FAILED", saved);
           s.db.update("UPDATE trainings SET lease_until=0 WHERE id=?", id);
         }
         return null;
       });
-      throw error(503, "生成失败，回答已保存。请重试或返还本次权益。");
+      throw error(503, "生成失败，进度已保存，请重试。");
     }
   }
 
-  Map<String, Object> refund(String user, String id) {
-    return s.locked(user, () -> {
-      var r = row(user, id);
-      String status = str(r, "status");
-      if (status.equals("REFUNDED")) return get(user, id);
-      boolean stale =
-        status.equals("GENERATING") &&
-        ((Number) r.get("lease_until")).longValue() <= now();
-      if (
-        !status.equals("FAILED") && !status.equals("PENDING") && !stale
-      ) throw error(
-        409,
-        "只有失败或已超时的训练可以返还；普通中断请继续原训练"
-      );
-      String packageId = str(r, "package_id"),
-        field = "DEEP".equals(r.get("kind")) ? "deep_used" : "retest_used";
-      var pack = s.one(
-        "SELECT * FROM training_packages WHERE id=? AND user_id=?",
-        packageId,
-        user
-      );
-      if (!PaymentService.legacy(pack)) s.db.update(
-        "UPDATE training_packages SET training_used=training_used-1 WHERE id=? AND training_used>0",
-        packageId
-      );
-      else s.db.update(
-        "UPDATE training_packages SET " + field + "=FALSE WHERE id=?",
-        packageId
-      );
-      s.db.update(
-        "INSERT INTO entitlement_events VALUES (?,?,?,?,?)",
-        id(),
-        packageId,
-        id,
-        "RETURNED",
-        now()
-      );
-      s.db.update(
-        "UPDATE trainings SET status='REFUNDED',generation_token=NULL,lease_until=0 WHERE id=?",
-        id
-      );
-      return get(user, id);
-    });
-  }
 }
