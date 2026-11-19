@@ -641,13 +641,13 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
                     : t.retestEntry?.state === "CONTINUE"
                       ? "继续复测"
                       : t.retestEntry?.state === "UNAVAILABLE"
-                        ? "此轮复测权益不可用"
+                        ? "此轮暂时无法复测"
                         : "开始关联复测"}
                 </Button>
                 <a href={"#/report/" + t.id}>查看上次报告</a>
               </div>
             ))}
-        </aside>
+        </aside>}
       </div>
     </section>
   );
