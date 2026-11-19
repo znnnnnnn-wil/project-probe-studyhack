@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Mic, Square, X, LoaderCircle, Plus, AudioLines, Check } from "lucide-react";
 import type { VoiceActivity } from "./voice-activity";
 import "./experience-voice.css";
@@ -78,11 +78,15 @@ export function ExperienceVoice({
   remaining,
   onAppend,
   onBusy,
+  auto = false,
+  suspended = false,
 }: {
   disabled: boolean;
   remaining: number;
   onAppend: (text: string) => void;
   onBusy?: (busy: boolean) => void;
+  auto?: boolean;
+  suspended?: boolean;
 }) {
   const [supported] = useState(() => recognitionCtor() !== null);
   const [state, setState] = useState<VoiceState>("idle");
@@ -96,10 +100,12 @@ export function ExperienceVoice({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [overflow, setOverflow] = useState("");
+  const [paused, setPaused] = useState(false);
 
   const session = useRef<VoiceSession | null>(null);
-  const current = useRef({ remaining, onAppend, disabled, autoStop });
-  current.current = { remaining, onAppend, disabled, autoStop };
+  const blocked = disabled || (auto && (suspended || paused));
+  const current = useRef({ remaining, onAppend, blocked, autoStop: auto || autoStop });
+  current.current = { remaining, onAppend, blocked, autoStop: auto || autoStop };
   const busyCallback = useRef(onBusy);
   busyCallback.current = onBusy;
   useEffect(() => {
@@ -110,9 +116,12 @@ export function ExperienceVoice({
       busyCallback.current?.(false);
     };
   }, []);
+  const busy = auto
+    ? state === "finishing" || (state === "recording" && heard)
+    : state !== "idle";
   useEffect(() => {
-    onBusy?.(state !== "idle");
-  }, [state, onBusy]);
+    onBusy?.(busy);
+  }, [busy, onBusy]);
 
   const reset = () => {
     setLive("");
@@ -132,20 +141,22 @@ export function ExperienceVoice({
       if (message) setError(message);
       return;
     }
+    if (auto && current.current.blocked) return;
     const text = voice.text.trim();
     if (!text) {
+      if (auto && !message && !voice.heard) return;
       setError(message || (voice.heard
         ? "已检测到说话，浏览器未返回文字。请确认识别语言后重试"
         : "浏览器未识别到语音，请检查麦克风选项后重试"));
       return;
     }
-    if (text.length > current.current.remaining || current.current.disabled) {
+    if (text.length > current.current.remaining || current.current.blocked) {
       setOverflow(text);
       setError("识别文字超出剩余字数，请精简后加入回答");
       return;
     }
     current.current.onAppend(text);
-    setNotice("语音已填入回答");
+    if (!auto) setNotice("语音已填入回答");
   };
 
   const requestStop = (voice: VoiceSession) => {
@@ -179,10 +190,12 @@ export function ExperienceVoice({
       node.port.onmessage = (event) => {
         if (session.current !== voice || voice.phase !== "recording") return;
         const chunk = event.data as Float32Array;
-        const rms = Math.sqrt(
-          chunk.reduce((sum, value) => sum + value * value, 0) / chunk.length,
-        );
-        setLevel(Math.min(100, rms * 400));
+        if (!auto) {
+          const rms = Math.sqrt(
+            chunk.reduce((sum, value) => sum + value * value, 0) / chunk.length,
+          );
+          setLevel(Math.min(100, rms * 400));
+        }
         voice.vad?.feed(chunk);
       };
       context.createMediaStreamSource(stream).connect(node);
@@ -222,7 +235,7 @@ export function ExperienceVoice({
   };
 
   const start = async () => {
-    if (session.current) return;
+    if (session.current || current.current.blocked) return;
     const Ctor = recognitionCtor();
     if (!Ctor) return;
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -278,7 +291,7 @@ export function ExperienceVoice({
       const started = performance.now();
       voice.clock = window.setInterval(() => {
         const elapsed = (performance.now() - started) / 1000;
-        setSeconds(Math.floor(elapsed));
+        if (!auto) setSeconds(Math.floor(elapsed));
         if (elapsed >= MAX_SECONDS || (voice.vad && current.current.autoStop && !voice.heard && elapsed >= 10))
           requestStop(voice);
       }, 250);
@@ -295,7 +308,7 @@ export function ExperienceVoice({
         voice.heard = true;
         setHeard(true);
       }
-      setLive(voice.text);
+      if (!auto) setLive(voice.text);
     };
     rec.onerror = (event) => {
       const messages: Record<string, string> = {
@@ -321,14 +334,109 @@ export function ExperienceVoice({
     if (session.current === voice) void monitorAudio(voice, stream);
   };
 
+  const startRef = useRef(start);
+  startRef.current = start;
+  const settleRef = useRef(settle);
+  settleRef.current = settle;
+  useLayoutEffect(() => {
+    if (auto && blocked && session.current)
+      settleRef.current(session.current, false, true);
+  }, [auto, blocked]);
+  useEffect(() => {
+    if (!auto || blocked || error || state !== "idle" || !supported || remaining <= 0)
+      return;
+    void startRef.current();
+  }, [auto, blocked, error, state, supported, remaining]);
+
   const addOverflow = () => {
-    const text = overflow.trim().slice(0, Math.max(0, current.current.remaining));
-    if (!text) return;
+    const text = overflow.trim();
+    if (blocked || !text || text.length > remaining) return;
     current.current.onAppend(text);
     setOverflow("");
     setError("");
-    setNotice("语音已填入回答");
+    if (!auto) setNotice("语音已填入回答");
   };
+  const overflowEditor = overflow && (
+    <div className="exp-voice-overflow">
+      <label>
+        识别结果（超出剩余字数，可精简）
+        <textarea
+          aria-label="语音识别结果"
+          rows={4}
+          maxLength={6000}
+          value={overflow}
+          onChange={(e) => setOverflow(e.target.value)}
+        />
+      </label>
+      <div className="exp-voice-overflow-actions">
+        <small>
+          {overflow.trim().length} 字 · 剩余 {Math.max(0, remaining)} 字
+        </small>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={blocked || !overflow.trim() || overflow.trim().length > remaining}
+          onClick={addOverflow}
+        >
+          <Plus size={16} aria-hidden="true" />
+          加入回答
+        </button>
+      </div>
+    </div>
+  );
+
+  if (auto) {
+    let status = "正在准备麦克风";
+    if (!supported) status = "当前浏览器不支持语音识别";
+    else if (paused) status = "麦克风已暂停";
+    else if (error) status = "语音面试已暂停";
+    else if (blocked) status = "轮到你时，麦克风会自动恢复";
+    else if (state === "finishing") status = "正在转写这段回答";
+    else if (state === "recording") {
+      status = heard ? "正在听你说话" : "麦克风已开启，可以直接说话";
+    }
+
+    return (
+      <div className="exp-voice practice-conversation-voice">
+        <div className="exp-voice-bar">
+          <span className="exp-voice-title">
+            <AudioLines size={16} aria-hidden="true" />
+            <span role="status">{status}</span>
+          </span>
+          {supported && (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => {
+                if (paused) setError("");
+                else if (session.current) settle(session.current, false, true);
+                setPaused(!paused);
+              }}
+            >
+              {paused ? "继续语音面试" : "暂停语音面试"}
+            </button>
+          )}
+        </div>
+        {!paused && error && (
+          <>
+            <p className="exp-voice-error" role="alert">{error}</p>
+            {overflow ? overflowEditor : (
+              <div className="exp-voice-bar">
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={blocked}
+                  onClick={() => setError("")}
+                >
+                  重试麦克风
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
 
   const active = state !== "idle";
   const canStart = supported && !disabled && remaining > 0 && !active;
@@ -458,34 +566,7 @@ export function ExperienceVoice({
         </div>
       )}
 
-      {overflow && (
-        <div className="exp-voice-overflow">
-          <label>
-            识别结果（超出剩余字数，可精简）
-            <textarea
-              aria-label="语音识别结果"
-              rows={4}
-              maxLength={6000}
-              value={overflow}
-              onChange={(e) => setOverflow(e.target.value)}
-            />
-          </label>
-          <div className="exp-voice-overflow-actions">
-            <small>
-              {overflow.trim().length} 字 · 剩余 {Math.max(0, remaining)} 字
-            </small>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={disabled || !overflow.trim() || overflow.trim().length > remaining}
-              onClick={addOverflow}
-            >
-              <Plus size={16} aria-hidden="true" />
-              加入回答
-            </button>
-          </div>
-        </div>
-      )}
+      {overflowEditor}
 
       {notice && !error && (
         <p className="exp-voice-notice" role="status">
