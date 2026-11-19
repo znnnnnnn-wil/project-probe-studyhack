@@ -47,15 +47,6 @@
   padding: 0;
   order: 0;
 }
-.editor-page .training-readiness {
-  padding: 24px;
-}
-.editor-page .training-heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.training-heading > span,
 .facts-empty-icon {
   display: inline-flex;
   align-items: center;
@@ -67,67 +58,11 @@
   width: 40px;
   height: 40px;
 }
-.editor-page .training-heading small {
-  font-size: 11px;
-}
-.editor-page .training-heading h2 {
-  margin: 4px 0 0;
-  font-size: 18px;
-}
-.editor-page .readiness-list {
-  background: var(--soft);
-  padding: 10px 14px;
-  border-radius: var(--r-sm);
-  margin: 22px 0;
-}
-.editor-page .readiness-list li {
-  margin: 10px 0;
-  line-height: 1.6;
-}
-.editor-page .readiness-list svg {
-  flex-shrink: 0;
-  color: var(--blue);
-}
-.editor-page .start-block {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  gap: 14px;
-}
-.editor-page .start-block label {
-  text-align: left;
-  font-size: 13px;
-  color: var(--text);
-  margin: 0;
-}
-.editor-page .start-prerequisite {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--muted);
-}
-.start-prerequisite svg {
-  flex-shrink: 0;
-  margin-top: 3px;
-}
 .editor-page .button:disabled {
   opacity: 1;
   background: var(--soft);
   color: var(--muted);
   border-color: var(--line);
-}
-.editor-page .training-readiness > .button {
-  margin-top: 20px;
-}
-.editor-page .start-block > small {
-  margin-top: -5px;
-  font-size: 11px;
-}
-.editor-page .start-block > a {
-  color: var(--blue);
 }
 .editor-page .facts-panel > h2 {
   font-size: 22px;
@@ -212,6 +147,68 @@
   font-size: 14px;
   padding: 10px 12px;
 }
+.editor-page .editor-layout:not(:has(> .training-aside)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.new-project-page {
+  max-width: 960px;
+}
+.new-project-modes {
+  display: inline-flex;
+  margin-bottom: 20px;
+}
+.new-project-modes > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.new-project-page .resume-import {
+  margin: 0 0 20px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--soft);
+}
+.new-project-page .manual-project {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.manual-project .panel-heading {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+}
+.manual-project .panel-heading p,
+.imported-projects > p {
+  margin: 0;
+  font-size: 13px;
+}
+.imported-projects {
+  display: grid;
+  gap: 16px;
+}
+.imported-project {
+  position: relative;
+  margin: 0;
+  padding: 38px 16px 16px;
+  border-radius: var(--r-sm);
+}
+.imported-project legend {
+  padding-inline: 5px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.imported-project-remove {
+  position: absolute;
+  top: 8px;
+  right: 16px;
+}
+.new-project-page .form-bottom {
+  justify-content: flex-end;
+}
 .editor-page .fact-review-list {
   gap: 16px;
   margin-block: 24px;
@@ -243,9 +240,6 @@
   .editor-page .facts-panel {
     padding: 22px;
   }
-  .editor-page .training-readiness {
-    padding: 20px;
-  }
 }
 @media (max-width: 740px) {
   .editor-page {
@@ -271,9 +265,6 @@
   .editor-page .materials-panel,
   .editor-page .facts-panel {
     padding: 20px;
-  }
-  .editor-page .training-readiness {
-    padding: 22px;
   }
   .facts-empty {
     padding: 24px 14px;
