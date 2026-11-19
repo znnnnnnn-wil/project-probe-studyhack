@@ -29,14 +29,9 @@
   min-width: 0;
 }
 .practice-heading h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 18px;
   line-height: 1.5;
-}
-.practice-heading p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
 }
 .practice-header .button {
   flex-shrink: 0;
@@ -169,6 +164,9 @@
   overflow-wrap: anywhere;
 }
 .practice-dialogue-messages p + p {
+  background: var(--soft);
+}
+.practice-dialogue-messages p.reply {
   background: var(--soft);
 }
 .practice-dialogue-messages strong {
@@ -422,6 +420,16 @@ html:has(.practice-room:modal) {
 }
 .practice-room .practice-question {
   padding: clamp(16px, 2vw, 28px);
+}
+.practice-setup label,
+.practice-setup label small {
+  display: block;
+}
+.practice-setup label small {
+  margin-top: 6px;
+}
+.practice-setup > .button {
+  margin-top: 16px;
 }
 .practice-room .practice-question h3 {
   font-size: clamp(18px, 1.7vw, 28px);
