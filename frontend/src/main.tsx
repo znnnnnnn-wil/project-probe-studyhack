@@ -27,6 +27,9 @@ const Login = lazy(() =>
 const Editor = lazy(() =>
   import("./editor").then((module) => ({ default: module.Editor })),
 );
+const NewProject = lazy(() =>
+  import("./new-project").then((module) => ({ default: module.NewProject })),
+);
 const History = lazy(() =>
   import("./history").then((module) => ({ default: module.History })),
 );
@@ -36,18 +39,8 @@ const Interview = lazy(() =>
 const ReportPage = lazy(() =>
   import("./report").then((module) => ({ default: module.ReportPage })),
 );
-const ShopPage = lazy(() =>
-  import("./shop").then((module) => ({ default: module.ShopPage })),
-);
-const PaymentReturn = lazy(() =>
-  import("./shop").then((module) => ({ default: module.PaymentReturn })),
-);
-
 function App() {
-  const [path, setPath] = useState(
-    location.hash.slice(1) ||
-      (location.pathname === "/payment-return" ? "/payment-return" : "/"),
-  );
+  const [path, setPath] = useState(location.hash.slice(1) || "/");
   const [user, setUser] = useState<{ id: string; username: string } | null>(
     null,
   );
@@ -55,8 +48,6 @@ function App() {
   const [config, setConfig] = useState<{
     modelMode: string;
     modelName?: string;
-    paymentMode: string;
-    paymentConfigured: boolean;
   } | null>(null);
   const [error, setError] = useState("");
   const [serviceError, setServiceError] = useState("");
@@ -67,10 +58,7 @@ function App() {
   useEffect(() => {
     const change = () => {
       ++navigationVersion.current;
-      setPath(
-        location.hash.slice(1) ||
-          (location.pathname === "/payment-return" ? "/payment-return" : "/"),
-      );
+      setPath(location.hash.slice(1) || "/");
       setError("");
       setMenu(false);
       window.scrollTo(0, 0);
@@ -112,22 +100,21 @@ function App() {
     }
   }, []);
   const props = { run, busy };
-  const nav = path.split("?")[0].split("/")[1];
+  const [route, search] = path.split("?", 2);
+  const [, nav, routeId] = route.split("/");
   const publicHome = path === "/" && !user;
   const publicPage = nav === "experience" || publicHome;
   const projectsActive = nav === "projects" || (!!user && !nav);
-  const modeLabel = nav === "experience"
-    ? "本地规则演示 · 不调用模型"
-    : config?.modelMode === "live"
-      ? "真实 AI 模式 · 反馈可回溯原文"
-      : "规则演示 · 非 AI 技术评估";
+  const modeLabel = config?.modelMode === "live"
+    ? "真实 AI 模式 · 反馈可回溯原文"
+    : "规则演示 · 非 AI 技术评估";
   useEffect(() => {
     if (
       ready &&
       !user &&
       path !== "/" &&
       path !== "/login" &&
-      /^\/(projects|trainings|report|shop|history|payment-return)(\/|$)/.test(
+      /^\/(projects|trainings|report|history)(\/|$)/.test(
         path,
       )
     ) {
@@ -235,34 +222,30 @@ function App() {
                     sessionStorage.getItem("auth:return") || "/projects";
                   sessionStorage.removeItem("auth:return");
                   go(
-                    location.pathname === "/payment-return"
-                      ? "/payment-return"
-                      : /^\/(projects|trainings|report|shop|history)(\/|$)/.test(
-                            next,
-                          )
-                        ? next
-                        : "/projects",
+                    /^\/(projects|trainings|report|history)(\/|$)/.test(next)
+                      ? next
+                      : "/projects",
                   );
                 }}
               />
             ) : nav === "account" ? <Account {...props} /> : path === "/" || nav === "projects" ? (
-              path === "/" || path === "/projects" ? (
+              route === "/" || route === "/projects" ? (
                 <Workspace {...props} />
+              ) : route === "/projects/new" ? (
+                <NewProject {...props} />
               ) : (
-                <Editor key={path} id={path.split("/")[2]} {...props} />
+                <Editor
+                  key={path}
+                  id={routeId}
+                  roundId={new URLSearchParams(search).get("roundId") || undefined}
+                  openOnLoad={new URLSearchParams(search).get("interview") === "1"}
+                  {...props}
+                />
               )
             ) : nav === "trainings" ? (
-              <Interview key={path} id={path.split("/")[2]} {...props} />
+              <Interview key={path} id={routeId} {...props} />
             ) : nav === "report" ? (
-              <ReportPage key={path} id={path.split("/")[2]} {...props} />
-            ) : nav === "shop" ? (
-              <Empty title="参赛体验无需购买" text="返回项目页开始免费训练，或免登录体验五轮示例。" action={() => go("/projects")} />
-            ) : nav === "payment-return" ? (
-              <PaymentReturn
-                {...props}
-                configured={config?.paymentConfigured || false}
-                mode={config?.paymentMode || ""}
-              />
+              <ReportPage key={path} id={routeId} {...props} />
             ) : nav === "history" ? (
               <History {...props} />
             ) : (
@@ -275,15 +258,6 @@ function App() {
           </Suspense>
         </PageBoundary>
       </main>
-      <footer className="site-footer">
-        <div className="footer-bar">
-          <span>项目追问官</span>
-          <div className="footer-links">
-            <a href="#/account">账户与数据</a>
-            <a href="#/privacy">隐私与服务说明</a>
-          </div>
-        </div>
-      </footer>
     </>
   );
 }

@@ -16,26 +16,18 @@ import { ProjectPractice } from "./project-practice";
 import "./editor.css";
 import { ProjectFields } from "./project-fields";
 
-export function Editor({ id, run, busy }: Actions & { id: string }) {
+export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: string; roundId?: string; openOnLoad?: boolean }) {
   const mounted = useMounted();
   const [importBusy, setImportBusy] = useState(false);
   busy = busy || importBusy;
   const [p, setP] = useState<Project>({ ...emptyProject });
-  const [loaded, setLoaded] = useState(id === "new");
+  const [loaded, setLoaded] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [history, setHistory] = useState<TrainingSummary[]>([]);
   const [startKey] = useState(crypto.randomUUID());
-  const [startError, setStartError] = useState("");
-  const [starting, setStarting] = useState(false);
-  const [exerciseMode, setExerciseMode] = useState("STANDARD");
-  const [difficulty, setDifficulty] = useState("IMPLEMENTATION");
-  const [step, setStep] = useState<"materials" | "facts">("materials");
-  const [shop, setShop] = useState<Shop | null>(null);
   const [draftNotice, setDraftNotice] = useState("");
-  const [factsDirty, setFactsDirty] = useState(false);
   const [expanded, setExpanded] = useState(() => sessionStorage.getItem("project:expand:" + id) === "true");
   const draftKey = "project-draft:" + id;
-  const factDraftKey = "fact-draft:" + id;
   const restore = (project: Project) => {
     const raw = sessionStorage.getItem(draftKey);
     if (raw)
@@ -168,7 +160,7 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
             提取与追问，并保存在服务端。请移除密钥、个人身份信息和无权提供的代码。
           </p>
           <ResumeImport
-            disabled={busy || factsDirty}
+            disabled={busy}
             onBusy={setImportBusy}
             onSelect={(candidate) => {
               if (
@@ -227,29 +219,22 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
                   继续{t.kind === "RETEST" ? "专项复测" : "已有深挖"}
                 </strong>
                 <small>
-                  已保存 {t.answeredCount}/{t.maxTurns} 个回答 · 不重复扣次
+                  已保存 {t.answeredCount}/{t.maxTurns} 个回答
                 </small>
               </div>
               <ArrowRight size={15} />
             </a>
           ))}
-          {history
-            .filter((t) => t.kind === "DEEP" && t.status === "COMPLETED")
-            .map((t) => (
+          {completedDeep.map((t) => (
               <div className="retest-entry" key={t.id}>
                 <RefreshCw size={22} />
                 <h3>补充后，再测一次</h3>
                 <p>{t.retestTopics?.join(" · ")}</p>
-                {t.retestEntry?.returned &&
-                  t.retestEntry.state === "AVAILABLE" && (
-                    <small>上次故障复测次数已返还，可以重新开始。</small>
-                  )}
                 <Button
                   disabled={
                     busy ||
                     t.retestEntry?.state === "UNAVAILABLE" ||
-                    (t.retestEntry?.state === "AVAILABLE" &&
-                      (dirty || !p.factsConfirmed))
+                    (t.retestEntry?.state === "AVAILABLE" && dirty)
                   }
                   onClick={() => {
                     const entry = t.retestEntry;
@@ -259,7 +244,7 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
                           ? "/report/"
                           : "/trainings/") + entry.trainingId,
                       );
-                    else start(t.id);
+                    else startRetest(t.id);
                   }}
                 >
                   {t.retestEntry?.state === "COMPLETED"

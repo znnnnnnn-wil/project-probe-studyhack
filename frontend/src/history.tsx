@@ -9,6 +9,8 @@ import { TrainingSelect } from "./training-select";
 
 type PracticeRecord = {
   projectId: string;
+  roundId?: string;
+  roundNumber?: number;
   name: string;
   status: string;
   answeredCount: number;
@@ -112,19 +114,22 @@ export function History(_props: Actions) {
       />
       {practice.error && (
         <div role="alert">
-          {practice.error} <Button secondary onClick={practice.reload}>重新读取免费记录</Button>
+          {practice.error} <Button secondary onClick={practice.reload}>重新读取项目训练</Button>
         </div>
       )}
       {!!practice.data?.length && (
-        <section className="panel history-list" aria-label="免费项目训练">
-          <h2>免费项目训练</h2>
+        <section className="panel history-list" aria-label="项目练习">
+          <h2>项目练习</h2>
           {practice.data.map(record => (
-            <article className="history-record" key={record.projectId}>
-              <a className="history-link" href={`#/projects/${record.projectId}`}>
+            <article className="history-record" key={record.roundId ?? record.projectId}>
+              <a className="history-link" href={
+                `#/projects/${record.projectId}` +
+                (record.status === "COMPLETED" && record.roundId ? `?roundId=${encodeURIComponent(record.roundId)}` : "")
+              }>
                 <div className="card-icon"><MessageSquare /></div>
                 <div>
                   <h3>{record.name}</h3>
-                  <p>已回答 {record.answeredCount} / {record.maxTurns} 题
+                  <p>{record.roundNumber ? `第 ${record.roundNumber} 轮 · ` : ""}已回答 {record.answeredCount} / {record.maxTurns} 题
                     {record.retestCompleted && " · 专项复测已完成"}
                     {record.status === "COMPLETED" ? " · 查看复盘" : " · 继续训练"}
                   </p>
@@ -160,7 +165,7 @@ export function History(_props: Actions) {
         ) : !page.data.total && (practice.loading || practice.data?.length) ? null : !page.data.total ? (
           <Empty
             title="还没有开始训练"
-            text="先创建并核对项目档案，开始你的第一次深挖。"
+            text="保存项目材料后，即可开始训练。"
             action={() => go("/projects")}
           />
         ) : (

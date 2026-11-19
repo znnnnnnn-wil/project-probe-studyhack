@@ -1,53 +1,29 @@
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
-  Check,
   FolderOpen,
   MessageSquare,
   Plus,
   Search,
   RefreshCw,
-  CreditCard,
 } from "lucide-react";
 import { api, go } from "./api";
-import type { ProjectSummary, TrainingSummary, Shop } from "./types";
-import { trainingQuota } from "./quota";
-import { competitionMode } from "./competition-mode";
-
-export function purchaseFrom(projectId?: string) {
-  if (projectId) sessionStorage.setItem("purchase:project", projectId);
-  else sessionStorage.removeItem("purchase:project");
-  go("/shop");
-}
-
-export function purchaseProject(orderId?: string) {
-  const id =
-    sessionStorage.getItem(
-      orderId ? "purchase:order:" + orderId : "purchase:project",
-    ) || "";
-  return /^[a-f0-9-]{36}$/.test(id) ? id : "";
-}
+import type { ProjectSummary, TrainingSummary } from "./types";
 
 export function Workspace({
   run,
-  busy,
 }: {
   run: (fn: () => Promise<void>) => Promise<void>;
-  busy: boolean;
 }) {
   const [data, setData] = useState<{
     projects: ProjectSummary[];
     trainings: TrainingSummary[];
-    shop: Shop;
-    activeCount: number;
-    completedCount: number;
   } | null>(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("全部");
   useEffect(() => {
     const controller = new AbortController();
     run(async () => {
-      const [projects, overview, shop] = await Promise.all([
+      const [projects, overview] = await Promise.all([
         api<ProjectSummary[]>(
           "/projects?summary=true",
           "GET",
@@ -56,18 +32,12 @@ export function Workspace({
         ),
         api<{
           items: TrainingSummary[];
-          activeCount: number;
-          completedCount: number;
         }>("/training-overview", "GET", undefined, controller.signal),
-        api<Shop>("/shop?summary=true", "GET", undefined, controller.signal),
       ]);
       if (!controller.signal.aborted)
         setData({
           projects,
           trainings: overview.items,
-          shop,
-          activeCount: overview.activeCount,
-          completedCount: overview.completedCount,
         });
     });
     return () => controller.abort();
@@ -76,14 +46,9 @@ export function Workspace({
     data?.trainings.filter(
       (t) => !["COMPLETED", "REFUNDED"].includes(t.status),
     ) || [];
-  const balance = trainingQuota(data?.shop);
-  const quota = balance.unlimited ? "不限次数" : balance.deepAvailable;
   const projects =
     data?.projects.filter(
-      (p) =>
-        (p.name + " " + p.stack).toLowerCase().includes(query.toLowerCase()) &&
-        (filter === "全部" ||
-          (filter === "待核对" ? !p.factsConfirmed : p.factsConfirmed)),
+      (p) => (p.name + " " + p.stack).toLowerCase().includes(query.trim().toLowerCase()),
     ) || [];
   return (
     <section className="page workspace-page">
@@ -97,19 +62,6 @@ export function Workspace({
           <Plus size={17} />
           新建项目
         </button>
-      </div>
-      <div className="workspace-stats" aria-label="练习概览">
-        {[
-          ["项目档案", data?.projects.length],
-          ["待继续训练", data?.activeCount],
-          ["已完成报告", data?.completedCount],
-          [competitionMode ? "免费练习" : "可用深挖", competitionMode ? "5 题" : quota],
-        ].map(([name, value]) => (
-          <div key={name}>
-            <span>{name}</span>
-            <strong>{data ? value : "—"}</strong>
-          </div>
-        ))}
       </div>
       {!data ? (
         <div className="empty" role="status">
@@ -151,20 +103,8 @@ export function Workspace({
               ))}
             </section>
           )}
-          <div className="workspace-content">
             <section className="project-index">
               <div className="index-toolbar">
-                <div className="segmented" aria-label="项目状态">
-                  {["全部", "待核对", "已核对"].map((v) => (
-                    <button
-                      key={v}
-                      aria-pressed={v === filter}
-                      onClick={() => setFilter(v)}
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
                 <label className="search-field">
                   <Search size={16} />
                   <input
@@ -192,7 +132,7 @@ export function Workspace({
                     className="button secondary"
                     onClick={() =>
                       data.projects.length
-                        ? (setQuery(""), setFilter("全部"))
+                        ? setQuery("")
                         : go("/projects/new")
                     }
                   >
@@ -205,23 +145,14 @@ export function Workspace({
                   const latest = data.trainings.find(
                     (t) => t.project.id === p.id && t.status !== "REFUNDED",
                   );
-                  const ongoing = data.trainings.find(
-                    (t) =>
-                      t.project.id === p.id &&
-                      !["COMPLETED", "REFUNDED"].includes(t.status),
-                  );
-                  const next = ongoing
-                    ? "/trainings/" + ongoing.id
-                    : "/projects/" + p.id;
+                  const projectPath = "#/projects/" + p.id;
                   return (
                     <article className="project-row" key={p.id}>
                       <span className="project-mark">
                         <FolderOpen size={21} />
                       </span>
                       <div className="project-info">
-                        <a href={"#/projects/" + p.id}>
-                          <h2>{p.name}</h2>
-                        </a>
+                        <h2>{p.name}</h2>
                         <p>{p.background || "尚未补充项目背景"}</p>
                         <div className="tags">
                           {p.stack
@@ -232,35 +163,13 @@ export function Workspace({
                               <span key={i}>{tag.trim()}</span>
                             ))}
                         </div>
-                        <small>
-                          {latest
-                            ? (latest.kind === "RETEST"
-                                ? "最近复测"
-                                : "最近深挖") +
-                              " · " +
-                              new Date(latest.createdAt).toLocaleDateString(
-                                "zh-CN",
-                              )
-                            : "尚未开始训练"}
-                        </small>
                       </div>
                       <div className="project-actions">
-                        <span
-                          className={
-                            "badge " + (p.factsConfirmed ? "confirmed" : "")
-                          }
-                        >
-                          {p.factsConfirmed ? <Check size={12} /> : null}
-                          {p.factsConfirmed ? "事实已核对" : "待核对事实"}
-                        </span>
-                        <a className="text-link" href={"#" + next}>
-                          {ongoing
-                            ? "继续训练"
-                            : p.factsConfirmed
-                              ? "进入项目"
-                              : "整理材料"}
+                        <a className="button secondary" href={projectPath + "?interview=1"}>
+                          进入面试室
                           <ArrowRight size={15} />
                         </a>
+                        <a className="minor-link" href={projectPath}>编辑材料</a>
                         {latest?.status === "COMPLETED" && (
                           <a
                             href={"#/report/" + latest.id}
@@ -275,38 +184,6 @@ export function Workspace({
                 })
               )}
             </section>
-            <aside className="workspace-aside">
-              {competitionMode ? <>
-                <MessageSquare size={23} /><h2>从自己的项目开始</h2><p>每账号可免费完成一轮五题练习，不需要购买训练包。进入一个项目，保存材料后即可开始。</p>
-                <a className="button secondary" href="#/experience">先试合成示例 <ArrowRight size={15} /></a><hr />
-                <h3>练习路线</h3><ol className="workflow-list"><li>保存自己的项目材料</li><li>围绕实现连续追问五轮</li><li>回看原回答与材料引用</li><li>记录补充任务并导出复盘</li></ol>
-              </> : <>
-              <CreditCard size={21} />
-              <h2>训练权益</h2>
-              <div className="quota-number">
-                {quota}
-                <small>次深挖可用</small>
-              </div>
-              <p>新套餐的深挖与复测共用次数。继续已有训练不重复消耗次数。</p>
-              <button
-                className="button secondary"
-                disabled={busy}
-                onClick={() => purchaseFrom()}
-              >
-                训练包与订单
-                <ArrowRight size={15} />
-              </button>
-              <hr />
-              <h3>下一步</h3>
-              <ol className="workflow-list">
-                <li>保存项目材料</li>
-                <li>核对原文与事实边界</li>
-                <li>回答连续项目追问</li>
-                <li>补充任务后关联复测</li>
-              </ol>
-              </>}
-            </aside>
-          </div>
         </>
       )}
     </section>
