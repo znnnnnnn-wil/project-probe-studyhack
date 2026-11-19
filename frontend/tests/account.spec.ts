@@ -16,7 +16,7 @@ test("同账号刷新保留草稿，登录切换和启动身份变化清理前�
   page.on("dialog", dialog => dialog.accept());
   await page.goto("/#/projects/new");
   await page.getByLabel("项目名称", { exact: true }).fill("账号A未保存的项目");
-  await page.getByLabel("个人职责（必填）", { exact: true }).fill("账号A的私人材料");
+  await page.getByLabel("项目简介", { exact: true }).fill("账号A的私人材料");
   await page.reload();
   await expect(page.getByLabel("项目名称", { exact: true })).toHaveValue("账号A未保存的项目");
   await page.evaluate(() => { location.hash = "/login"; });
@@ -27,7 +27,7 @@ test("同账号刷新保留草稿，登录切换和启动身份变化清理前�
   await expect(page.getByRole("link", { name: "草稿账号B · 账户" })).toBeVisible();
   await page.evaluate(() => { location.hash = "/projects/new"; });
   await expect(page.getByLabel("项目名称", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("个人职责（必填）", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("项目简介", { exact: true })).toHaveValue("");
   await page.getByLabel("项目名称", { exact: true }).fill("账号B私人项目");
   user = { id: "synthetic-a", username: "草稿账号A" };
   await page.reload();

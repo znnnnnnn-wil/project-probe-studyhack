@@ -12,11 +12,10 @@ import { ResumeImport } from "./resume-import";
 import { Button, Loading, PageHead } from "./ui";
 import type { Actions } from "./ui";
 import { useMounted } from "./use-read-scope";
-import { ProjectPractice } from "./project-practice";
 import "./editor.css";
 import { ProjectFields } from "./project-fields";
 
-export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: string; roundId?: string; openOnLoad?: boolean }) {
+export function Editor({ id, run, busy }: Actions & { id: string }) {
   const mounted = useMounted();
   const [importBusy, setImportBusy] = useState(false);
   busy = busy || importBusy;
@@ -26,7 +25,6 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
   const [history, setHistory] = useState<TrainingSummary[]>([]);
   const [startKey] = useState(crypto.randomUUID());
   const [draftNotice, setDraftNotice] = useState("");
-  const [expanded, setExpanded] = useState(() => sessionStorage.getItem("project:expand:" + id) === "true");
   const draftKey = "project-draft:" + id;
   const restore = (project: Project) => {
     const raw = sessionStorage.getItem(draftKey);
@@ -36,10 +34,9 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
         if (
           draft.version === project.version &&
           typeof draft.name === "string" &&
-          typeof draft.responsibility === "string"
+          typeof draft.background === "string"
         ) {
           setP({ ...project, ...draft });
-          setExpanded(true);
           setDirty(true);
           setDraftNotice("已恢复此标签页未保存的材料");
           return;
@@ -52,7 +49,6 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
   };
   useEffect(() => {
     const controller = new AbortController();
-    sessionStorage.removeItem("project:expand:" + id);
     run(async () => {
       const [project, history] = await Promise.all([
         api<Project>("/projects/" + id, "GET", undefined, controller.signal),
@@ -123,33 +119,17 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
           {draftNotice}
         </p>
       )}
-      <ProjectPractice
-        projectId={id}
-        projectName={p.name}
-        roundId={roundId}
-        openOnLoad={openOnLoad}
-        disabled={dirty}
-        run={run}
-        busy={busy}
-        onSaved={project => {
-          setP(project);
-          setDirty(false);
-          sessionStorage.removeItem(draftKey);
-          setDraftNotice("练习补充已保存到项目材料。");
-        }}
-        onEditMaterials={() => document.getElementById("project-materials")?.scrollIntoView({ block: "start" })}
-      />
       <div className="editor-layout">
         <div id="project-materials" className="materials-panel">
           <div className="panel-heading">
             <h2>项目材料</h2>
           </div>
           <div className="material-guide">
-            <strong>先填两项，就能开始</strong>
-            <p>保存项目名称和个人职责后即可开始训练。技术栈、实现和验证细节可以按需补充。</p>
+            <strong>填好名称，就能开始</strong>
+            <p>保存项目名称后即可开始训练。目标岗位、技术栈、项目简介与项目经历可以按需补充。</p>
             <details>
-              <summary>个人职责怎么写？查看填写参考</summary>
-              <p>围绕一个你亲自参与的功能，写清做了什么、怎么做，以及哪些内容还不确定。</p>
+              <summary>项目简介与项目经历怎么写？查看填写参考</summary>
+              <p>简介写清项目为谁解决什么问题；经历围绕你亲自参与的部分，写清做了什么、怎么做，以及哪些内容还不确定。</p>
               <blockquote>合成示例：我负责预约创建接口，用数据库唯一约束处理重复预约；登录模块由同学完成；并发正确性还没有验证。</blockquote>
               <p>请按实际经历填写。课程项目、协作任务和未验证的内容都可以如实说明。</p>
             </details>
@@ -164,7 +144,7 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
             onBusy={setImportBusy}
             onSelect={(candidate) => {
               if (
-                (p.name.trim() || p.responsibility.trim() || p.resume.trim()) &&
+                (p.name.trim() || p.background.trim() || p.resume.trim()) &&
                 !window.confirm(
                   "将用选中的简历项目替换当前材料草稿，已保存的服务器记录不会立即修改。是否继续？",
                 )
@@ -188,14 +168,11 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
               save();
             }}
           >
-            <ProjectFields project={p} expanded={expanded} basics={["name", "targetRole", "responsibility"]}
+            <ProjectFields project={p}
               onChange={(field, value) => {
                 setP({ ...p, [field]: value });
                 setDirty(true);
               }} />
-            <button type="button" className="text-link" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-              {expanded ? "收起补充材料" : "展开技术栈、实现与验证等补充材料"}
-            </button>
             <div className="form-bottom">
               <span>
                 {dirty ? "有尚未保存的修改" : "材料已保存"}

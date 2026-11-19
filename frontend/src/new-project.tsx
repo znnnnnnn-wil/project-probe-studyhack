@@ -15,8 +15,6 @@ import "./editor.css";
 const manualKey = "project-draft:new";
 const resumeKey = "project-resume-draft:new";
 const blankProject = { ...emptyProject, targetRole: "" };
-const manualFields: MaterialField[] = ["name", "responsibility"];
-const resumeFields: MaterialField[] = ["name", "stack", "responsibility"];
 const entryModes = [
   { value: "manual", label: "手动填写", Icon: PencilLine },
   { value: "resume", label: "上传简历", Icon: Upload },
@@ -42,7 +40,7 @@ function readResumeDraft(): ResumeDraft | null {
       (entry) =>
         typeof entry?.key === "string" &&
         typeof entry.project?.name === "string" &&
-        typeof entry.project.responsibility === "string",
+        typeof entry.project.resume === "string",
     )
     ? saved
     : null;
@@ -66,7 +64,6 @@ function ImportedProjectFields({
   onChange: (field: MaterialField, value: string) => void;
   onRemove: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   return (
     <fieldset className="imported-project" disabled={disabled}>
       <legend>项目 {index + 1}</legend>
@@ -78,20 +75,7 @@ function ImportedProjectFields({
       >
         <X size={15} /> 移除
       </button>
-      <ProjectFields
-        project={entry.project}
-        expanded={expanded}
-        basics={resumeFields}
-        onChange={onChange}
-      />
-      <button
-        type="button"
-        className="text-link"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? "收起项目详情" : "展开项目详情"}
-      </button>
+      <ProjectFields project={entry.project} onChange={onChange} />
     </fieldset>
   );
 }
@@ -102,7 +86,7 @@ export function NewProject({ run, busy }: Actions) {
   const [manual, setManual] = useState(() => {
     const saved = readDraft<Project>(manualKey);
     return typeof saved?.name === "string" &&
-      typeof saved.responsibility === "string"
+      typeof saved.background === "string"
       ? { ...blankProject, ...saved }
       : null;
   });
@@ -110,7 +94,6 @@ export function NewProject({ run, busy }: Actions) {
   const [mode, setMode] = useState<"manual" | "resume">(() =>
     imported ? "resume" : "manual",
   );
-  const [expanded, setExpanded] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [formError, setFormError] = useState("");
   const disabled = busy || importBusy;
@@ -160,13 +143,13 @@ export function NewProject({ run, busy }: Actions) {
       ? batch.projects.map(({ project }) => project)
       : [manual ?? blankProject];
     const missing = projects.findIndex(
-      (project) => !project.name.trim() || !project.responsibility.trim(),
+      (project) => !project.name.trim(),
     );
     if (missing >= 0) {
       setFormError(
         batch
-          ? `请填写项目 ${missing + 1} 的名称和个人职责。`
-          : "请填写项目名称和个人职责。",
+          ? `请填写项目 ${missing + 1} 的名称。`
+          : "请填写项目名称。",
       );
       return;
     }
@@ -238,7 +221,7 @@ export function NewProject({ run, busy }: Actions) {
                 aria-label="项目材料"
               >
                 <div className="panel-heading">
-                  <p>填写项目名称和个人职责即可保存。</p>
+                  <p>填写项目名称即可保存，其余信息按需补充。</p>
                   <button
                     type="button"
                     className="text-link"
@@ -253,7 +236,14 @@ export function NewProject({ run, busy }: Actions) {
                         )
                       )
                         return;
-                      updateManual({ ...demoProject });
+                      updateManual({
+                        ...blankProject,
+                        name: demoProject.name,
+                        targetRole: demoProject.targetRole,
+                        stack: demoProject.stack,
+                        background: demoProject.background,
+                        resume: demoProject.resume,
+                      });
                       setFormError("");
                     }}
                   >
@@ -262,22 +252,10 @@ export function NewProject({ run, busy }: Actions) {
                 </div>
                 <ProjectFields
                   project={manual ?? blankProject}
-                  expanded={expanded}
-                  basics={manualFields}
                   onChange={(field, value) =>
                     updateManual({ ...blankProject, ...manual, [field]: value })
                   }
                 />
-                <button
-                  type="button"
-                  className="text-link"
-                  aria-expanded={expanded}
-                  onClick={() => setExpanded(!expanded)}
-                >
-                  {expanded
-                    ? "收起补充材料"
-                    : "展开技术栈、实现与验证等补充材料"}
-                </button>
               </fieldset>
             ) : (
               <div className="imported-projects">
