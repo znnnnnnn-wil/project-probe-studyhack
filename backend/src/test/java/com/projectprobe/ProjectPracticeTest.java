@@ -50,6 +50,70 @@ class ProjectPracticeTest {
     assertEquals(0, s.db.queryForObject("SELECT COUNT(*) FROM trainings WHERE user_id=?", Integer.class, user));
   }
 
+  @Test void cancellingStartsAFreshRoundWithoutChangingReportsOrOtherProjects() {
+    String user = id(); s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
+    String project = str(projects.save(user, null, Map.of("name", "取消面试项目")), "id");
+    practice.run(user, project, Map.of());
+    var completed = practice.run(user, project, Map.of("answer", "我负责数据库唯一约束。"));
+    String completedId = str(completed, "roundId");
+    var active = practice.run(user, project, Map.of("restart", true, "roundId", completedId));
+    String cancelledId = str(active, "roundId");
+    String otherProject = str(projects.save(user, null, Map.of("name", "另一个项目")), "id");
+    var other = practice.run(user, otherProject, Map.of());
+    assertThrows(ResponseStatusException.class, () -> practice.cancel(id(), project, cancelledId));
+    assertThrows(ResponseStatusException.class, () -> practice.cancel(user, otherProject, cancelledId));
+    assertThrows(ResponseStatusException.class, () -> practice.cancel(user, project, completedId));
+    assertEquals(active, practice.get(user, project));
+
+    var available = practice.cancel(user, project, cancelledId);
+    assertEquals("AVAILABLE", available.get("status"));
+    assertFalse(available.containsKey("roundId"));
+    assertFalse(available.containsKey("turns"));
+    assertEquals(available, practice.cancel(user, project, cancelledId));
+    assertEquals(completed, practice.get(user, project, completedId));
+    assertEquals(other, practice.get(user, otherProject));
+    assertEquals(2, practice.history(user).size());
+    assertThrows(ResponseStatusException.class, () -> practice.get(user, project, cancelledId));
+    String oldTurn = str(list(active, "turns").get(0), "id");
+    assertThrows(ResponseStatusException.class, () -> practice.requireUnansweredTurn(user, project, oldTurn, 0));
+    assertThrows(ResponseStatusException.class, () -> practice.run(user, project, Map.of("turnId", oldTurn, "answer", "迟到的回答")));
+
+    var next = practice.run(user, project, Map.of("topic", "新的面试主题"));
+    assertEquals(3L, next.get("roundNumber"));
+    assertNotEquals(cancelledId, next.get("roundId"));
+    assertNotEquals(oldTurn, list(next, "turns").get(0).get("id"));
+    assertEquals(1, list(next, "turns").size());
+    assertEquals("", list(next, "turns").get(0).get("answer"));
+    assertEquals(next, practice.cancel(user, project, cancelledId));
+    assertEquals(next, practice.get(user, project));
+  }
+
+  @Test void cancellationInvalidatesInFlightGenerationAndAllowsFailedRoundsToEnd() {
+    String user = id(); s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
+    String project = str(projects.save(user, null, Map.of("name", "生成期间取消")), "id");
+    var lateModel = new ModelService(s, "demo", "https://never-called.invalid", "synthetic", "synthetic", "test") {
+      @Override GeneratedQuestion firstDeepQuestion(Map<String, Object> body) {
+        var generating = practice.get(user, project);
+        assertEquals("GENERATING", generating.get("status"));
+        practice.cancel(user, project, str(generating, "roundId"));
+        return new GeneratedQuestion("不应恢复的旧题目", "职责边界");
+      }
+    };
+    var inFlight = new ProjectPractice(s, projects, lateModel);
+    inFlight.maxTurns = 1; inFlight.journey = practice.journey;
+    assertThrows(ResponseStatusException.class, () -> inFlight.run(user, project, Map.of()));
+    assertEquals("AVAILABLE", practice.get(user, project).get("status"));
+    assertTrue(practice.history(user).isEmpty());
+    var cancelled = s.one("SELECT status,lease_until,lease_token FROM project_practice_rounds WHERE user_id=? AND project_id=?", user, project);
+    assertEquals("CANCELLED", cancelled.get("status"));
+    assertEquals(0L, cancelled.get("lease_until"));
+    assertNull(cancelled.get("lease_token"));
+    var next = practice.run(user, project, Map.of());
+    assertEquals(2L, next.get("roundNumber"));
+    s.db.update("UPDATE project_practice_rounds SET status='FAILED' WHERE user_id=? AND round_id=?", user, next.get("roundId"));
+    assertEquals("AVAILABLE", practice.cancel(user, project, str(next, "roundId")).get("status"));
+  }
+
   @Test void scoresUseOnlyAnsweredEvidenceAndAreSavedWithThePractice() {
     String user = id();
     s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
