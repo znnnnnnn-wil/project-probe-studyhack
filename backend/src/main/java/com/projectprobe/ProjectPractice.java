@@ -7,12 +7,12 @@ import org.springframework.stereotype.Service;
 @Service
 class ProjectPractice {
   final Store s; final ProjectService projects; final ModelService model;
-  @org.springframework.beans.factory.annotation.Value("${app.practice-max-turns:1}") int maxTurns;
+  @org.springframework.beans.factory.annotation.Value("${app.practice-max-turns:5}") int maxTurns;
   @org.springframework.beans.factory.annotation.Autowired JourneyMetrics journey;
   ProjectPractice(Store s, ProjectService projects, ModelService model) { this.s = s; this.projects = projects; this.model = model; }
   List<Map<String, Object>> history(String user) {
     return s.db.queryForList(
-      "SELECT t.project_id,t.status,t.body,t.lease_until FROM project_trials t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status<>'CLEARED'",
+      "SELECT t.project_id,t.round_id,t.round_number,t.status,t.body,t.lease_until FROM project_practice_rounds t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status<>'CLEARED' ORDER BY t.started_at DESC,t.round_number DESC,t.round_id",
       user
     ).stream().map(row -> {
       var body = s.decode(row.get("body"));
@@ -20,6 +20,8 @@ class ProjectPractice {
       var retest = PracticeRetest.object(body.get("retest"));
       return Map.<String, Object>of(
         "projectId", row.get("project_id"),
+        "roundId", row.get("round_id"),
+        "roundNumber", row.get("round_number"),
         "name", str(project, "name"),
         "status", status(row),
         "answeredCount", ReportComparison.answered(body, "turns").size(),
@@ -35,13 +37,29 @@ class ProjectPractice {
   }
 
   Map<String, Object> get(String user, String project) {
+    return get(user, project, "");
+  }
+
+  Map<String, Object> get(String user, String project, String roundId) {
     projects.get(user, project);
-    var rows = s.db.queryForList("SELECT * FROM project_trials WHERE user_id=?", user);
-    if (rows.isEmpty()) return Map.of("status", "AVAILABLE", "maxTurns", maxTurns);
+    var rows = roundId.isBlank()
+      ? s.db.queryForList(
+        "SELECT * FROM project_practice_rounds WHERE user_id=? AND project_id=? AND status<>'CLEARED' ORDER BY round_number DESC LIMIT 1",
+        user, project
+      )
+      : s.db.queryForList(
+        "SELECT * FROM project_practice_rounds WHERE user_id=? AND project_id=? AND round_id=? AND status<>'CLEARED'",
+        user, project, roundId
+      );
+    if (rows.isEmpty()) {
+      if (!roundId.isBlank()) throw error(404, "练习记录不存在");
+      return Map.of("status", "AVAILABLE", "maxTurns", maxTurns);
+    }
     var row = rows.get(0);
-    if (!project.equals(row.get("project_id")) || "CLEARED".equals(row.get("status"))) return Map.of("status", "USED");
     var result = s.decode(row.get("body"));
     long lease = ((Number) row.get("lease_until")).longValue();
+    result.put("roundId", row.get("round_id"));
+    result.put("roundNumber", row.get("round_number"));
     result.put("status", status(row));
     if (result.get("retest") instanceof Map<?, ?> && lease <= now()) {
       var retest = PracticeRetest.object(result.get("retest"));
@@ -66,41 +84,58 @@ class ProjectPractice {
 
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
     String token = id();
+    boolean restart = Boolean.TRUE.equals(input.get("restart"));
+    String answer = str(input, "answer").strip();
     var claim = s.locked(user, () -> {
       var current = get(user, projectId); String status = str(current, "status");
-      if (status.equals("USED")) throw error(409, "本账号已完成免费训练，请返回原项目查看问答与复盘");
-      if (status.equals("COMPLETED")) return null;
-      if (status.equals("AVAILABLE")) {
+      String roundId = str(current, "roundId");
+      if (restart) {
+        if (!status.equals("COMPLETED") || !roundId.equals(required(input, "roundId", 36)))
+          throw error(409, "练习状态已变化，请刷新后再开始");
+        if (((Number) current.get("leaseUntil")).longValue() > now())
+          throw error(409, "复测报告正在生成，请稍后再开始");
+      } else if (status.equals("COMPLETED")) return null;
+      if (status.equals("AVAILABLE") || restart) {
+        if (!answer.isBlank()) throw error(409, "当前问题已变化，请重新读取后再提交");
+        Object requestedTopic = input.get("topic");
+        if (requestedTopic != null && !(requestedTopic instanceof String))
+          throw error(400, "面试主题格式不正确");
+        String interviewTopic = str(input, "topic").strip();
+        if (interviewTopic.length() > 200) throw error(400, "面试主题最多 200 字");
         var project = new LinkedHashMap<>(projects.get(user, projectId));
         project.put("facts", list(project, "facts").stream().filter(f -> Boolean.TRUE.equals(f.get("confirmed"))).toList());
-        if (maxTurns < 1 || maxTurns > 5) throw error(503, "免费训练轮数配置不正确");
-        current = new LinkedHashMap<>(Map.of("project", project, "kind", "TRIAL", "turns", new ArrayList<>(), "modelMode", model.mode, "maxTurns", maxTurns));
-        s.db.update("INSERT INTO project_trials(user_id,project_id,status,body) VALUES (?,?,?,?)", user, projectId, "PENDING", s.encode(current));
-        journey.record(user, "TRIAL_STARTED", projectId);
-      } else {
-        var row = s.one("SELECT * FROM project_trials WHERE user_id=?", user);
-        if (status.equals("GENERATING") && ((Number) row.get("lease_until")).longValue() > now()) throw error(409, "体验正在生成，请稍后刷新");
-      }
+        if (maxTurns < 1 || maxTurns > 5) throw error(503, "练习轮数配置不正确");
+        long roundNumber = ((Number) current.getOrDefault("roundNumber", 0L)).longValue() + 1;
+        roundId = id();
+        current = new LinkedHashMap<>(Map.of("project", project, "kind", "PRACTICE", "turns", new ArrayList<>(), "modelMode", model.mode, "maxTurns", maxTurns));
+        if (!interviewTopic.isBlank()) current.put("interviewTopic", interviewTopic);
+        s.db.update(
+          "INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
+          user, projectId, roundId, roundNumber, now(), "PENDING", s.encode(current)
+        );
+        journey.record(user, "PRACTICE_STARTED", projectId);
+      } else if (status.equals("GENERATING")) throw error(409, "练习正在生成，请稍后刷新");
       var turns = list(current, "turns");
       if (!turns.isEmpty()) {
-        var turn = turns.get(turns.size() - 1); String answer = str(input, "answer").strip();
+        var turn = turns.get(turns.size() - 1);
         int limit = ((Number) current.getOrDefault("maxTurns", 1)).intValue();
+        String turnId = str(input, "turnId");
         int exchangeCount = PracticeDialogue.count(turn);
         var pending = PracticeRetest.object(current.get("pendingExchange"));
         boolean dialogue = Boolean.TRUE.equals(input.get("dialogue")) || exchangeCount > 0 || !pending.isEmpty();
-        if (!answer.isBlank() && limit > 1 && !str(turn, "id").equals(str(input, "turnId")))
+        if (!answer.isBlank() && (limit > 1 || !turnId.isBlank()) && !str(turn, "id").equals(turnId))
           throw error(409, "当前问题已变化，请重新读取后再提交");
         if (!answer.isBlank() && dialogue && (
-          !str(turn, "id").equals(str(input, "turnId")) ||
+          !str(turn, "id").equals(turnId) ||
           !PracticeDialogue.matchesCount(input.get("exchangeCount"), exchangeCount)
         )) throw error(409, "对话进度已更新，请重新读取后再回复");
         if (answer.isBlank() && str(turn, "answer").isBlank() && pending.isEmpty()) {
-          s.db.update("UPDATE project_trials SET status='ACTIVE',lease_until=0,lease_token=NULL WHERE user_id=?", user);
+          s.db.update("UPDATE project_practice_rounds SET status='ACTIVE',lease_until=0,lease_token=NULL WHERE user_id=? AND round_id=?", user, roundId);
           return null;
         }
         if (!answer.isBlank()) {
-          if (answer.length() > 3000) throw error(400, "体验回答最多3000字");
-          if (!str(turn, "answer").isBlank() && !answer.equals(turn.get("answer"))) throw error(409, "体验回答已提交");
+          if (answer.length() > 3000) throw error(400, "练习回答最多 3000 字");
+          if (!str(turn, "answer").isBlank() && !answer.equals(turn.get("answer"))) throw error(409, "练习回答已提交");
           if (dialogue) {
             if (!pending.isEmpty() && !answer.equals(str(pending, "answer")))
               throw error(409, "上一段发言已保存，请先恢复生成");
@@ -108,66 +143,74 @@ class ProjectPractice {
           } else turn.put("answer", answer);
         }
       }
-      s.db.update("UPDATE project_trials SET status='GENERATING',body=?,lease_until=?,lease_token=? WHERE user_id=?",
-        s.encode(current), now() + 90000, token, user);
-      return current;
+      current.remove("status");
+      current.remove("leaseUntil");
+      current.remove("roundId");
+      current.remove("roundNumber");
+      s.db.update("UPDATE project_practice_rounds SET status='GENERATING',body=?,lease_until=?,lease_token=? WHERE user_id=? AND round_id=?",
+        s.encode(current), now() + 90000, token, user, roundId);
+      return new Generation(roundId, current);
     });
     if (claim == null) return get(user, projectId);
+    var body = claim.body();
+    String roundId = claim.roundId();
     long priorDeadline = model.questionDeadline.get();
     model.questionDeadline.set(Math.min(priorDeadline, now() + 85000));
     try {
-      var turns = list(claim, "turns");
+      var turns = list(body, "turns");
       if (turns.isEmpty()) {
-        var question = model.firstDeepQuestion(claim);
+        var question = model.firstDeepQuestion(body);
         turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
       } else {
         var turn = turns.get(turns.size() - 1);
-        var pending = PracticeRetest.object(claim.get("pendingExchange"));
+        var pending = PracticeRetest.object(body.get("pendingExchange"));
         if (!pending.isEmpty()) {
           if (!str(turn, "id").equals(str(pending, "turnId")) ||
               !PracticeDialogue.matchesCount(pending.get("exchangeCount"), PracticeDialogue.count(turn)))
             throw error(409, "对话进度已更新，请重新读取后再回复");
           String utterance = str(pending, "answer");
-          var reply = PracticeDialogue.decide(model, claim, turn, utterance);
+          var reply = PracticeDialogue.decide(model, body, turn, utterance);
           var exchanges = list(turn, "exchanges");
           exchanges.add(Map.of("answer", utterance, "reply", reply.text()));
-          claim.remove("pendingExchange");
+          body.remove("pendingExchange");
           if (reply.advance()) {
             turn.put("answer", PracticeDialogue.combinedAnswer(exchanges));
             // Keep the model's decision if generating the next question or report fails.
             s.locked(user, () -> {
-              requireLease(user, token);
-              s.db.update("UPDATE project_trials SET body=? WHERE user_id=?", s.encode(claim), user);
+              requireLease(user, roundId, token);
+              s.db.update("UPDATE project_practice_rounds SET body=? WHERE user_id=? AND round_id=?", s.encode(body), user, roundId);
               return null;
             });
           }
         }
         if (!str(turn, "answer").isBlank()) {
-          if (turns.size() < ((Number) claim.getOrDefault("maxTurns", 1)).intValue()) {
-            var question = model.question(claim);
+          if (turns.size() < ((Number) body.getOrDefault("maxTurns", 1)).intValue()) {
+            var question = model.question(body);
             turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
-          } else claim.put("report", model.report(claim));
+          } else body.put("report", model.report(body));
         }
       }
       s.locked(user, () -> {
-        requireLease(user, token);
-        s.db.update("UPDATE project_trials SET status=?,body=?,lease_until=0,lease_token=NULL WHERE user_id=?",
-          claim.containsKey("report") ? "COMPLETED" : "ACTIVE", s.encode(claim), user);
-        if (claim.containsKey("report")) journey.record(user, "TRIAL_COMPLETED", projectId);
+        requireLease(user, roundId, token);
+        s.db.update("UPDATE project_practice_rounds SET status=?,body=?,lease_until=0,lease_token=NULL WHERE user_id=? AND round_id=?",
+          body.containsKey("report") ? "COMPLETED" : "ACTIVE", s.encode(body), user, roundId);
+        if (body.containsKey("report")) journey.record(user, "PRACTICE_COMPLETED", projectId);
         return null;
       });
     } catch (Exception e) {
-      s.db.update("UPDATE project_trials SET status='FAILED',lease_until=0 WHERE user_id=? AND lease_token=?", user, token);
-      throw error(503, "体验生成失败，已保存进度，可在原项目重试");
+      s.db.update("UPDATE project_practice_rounds SET status='FAILED',lease_until=0 WHERE user_id=? AND round_id=? AND lease_token=?", user, roundId, token);
+      throw error(503, "练习生成失败，已保存进度，可在原项目重试");
     } finally {
       if (priorDeadline == Long.MAX_VALUE) model.questionDeadline.remove();
       else model.questionDeadline.set(priorDeadline);
     }
-    return get(user, projectId);
+    return get(user, projectId, roundId);
   }
 
-  private void requireLease(String user, String token) {
-    var row = s.one("SELECT * FROM project_trials WHERE user_id=?", user);
+  private record Generation(String roundId, Map<String, Object> body) {}
+
+  private void requireLease(String user, String roundId, String token) {
+    var row = s.one("SELECT lease_token,lease_until FROM project_practice_rounds WHERE user_id=? AND round_id=?", user, roundId);
     if (!token.equals(row.get("lease_token")) || ((Number) row.get("lease_until")).longValue() <= now())
       throw error(409, "生成租约已失效，请重试");
   }

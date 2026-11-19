@@ -25,14 +25,15 @@ class PracticeRetest {
 
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
     String token = id();
-    var claim = store.locked(user, () -> {
-      var training = practice.get(user, projectId);
+    var generation = store.locked(user, () -> {
+      var training = practice.get(user, projectId, str(input, "roundId"));
       if (!"COMPLETED".equals(training.get("status"))) {
-        throw error(409, "先完成免费训练，再针对一项反馈复测");
+        throw error(409, "先完成项目练习，再针对一项反馈复测");
       }
+      String roundId = str(training, "roundId");
       var report = object(training.get("report"));
       var retest = object(training.get("retest"));
-      if ("COMPLETED".equals(retest.get("status"))) return null;
+      if ("COMPLETED".equals(retest.get("status"))) return new Generation(roundId, null);
       long lease = ((Number) training.get("leaseUntil")).longValue();
       if (lease > now()) throw error(409, "复测报告正在生成，请稍后查看");
       if (!str(training, "modelMode").equals(model.mode)) {
@@ -67,11 +68,13 @@ class PracticeRetest {
       training.put("retest", saved);
       training.remove("leaseUntil");
       training.remove("status");
+      training.remove("roundId");
+      training.remove("roundNumber");
       store.db.update(
-        "UPDATE project_trials SET body=?,lease_until=?,lease_token=? WHERE user_id=? AND project_id=?",
-        store.encode(training), now() + 90000, token, user, projectId
+        "UPDATE project_practice_rounds SET body=?,lease_until=?,lease_token=? WHERE user_id=? AND round_id=?",
+        store.encode(training), now() + 90000, token, user, roundId
       );
-      return Map.of(
+      return new Generation(roundId, Map.of(
         "kind", "RETEST",
         "focus", str(finding, "topic"),
         "previousReport", report,
@@ -79,15 +82,17 @@ class PracticeRetest {
         "project", training.get("project"),
         "turns", List.of(Map.of("id", id(), "question", str(previous, "question"),
           "topic", str(finding, "topic"), "answer", answer))
-      );
+      ));
     });
-    if (claim == null) return practice.get(user, projectId);
+    String roundId = generation.roundId();
+    var claim = generation.input();
+    if (claim == null) return practice.get(user, projectId, roundId);
 
     try {
       var report = model.report(new LinkedHashMap<>(claim));
       if ("demo".equals(model.mode)) report.put("comparisons", List.of(demoComparison(claim)));
       store.locked(user, () -> {
-        var row = store.one("SELECT * FROM project_trials WHERE user_id=? AND project_id=?", user, projectId);
+        var row = store.one("SELECT * FROM project_practice_rounds WHERE user_id=? AND round_id=?", user, roundId);
         if (!token.equals(row.get("lease_token")) || ((Number) row.get("lease_until")).longValue() <= now()) {
           throw error(409, "复测生成超时，请继续生成已保存的补答");
         }
@@ -95,16 +100,18 @@ class PracticeRetest {
         var retest = object(training.get("retest"));
         retest.put("status", "COMPLETED");
         retest.put("report", report);
-        store.db.update("UPDATE project_trials SET body=?,lease_until=0,lease_token=NULL WHERE user_id=?",
-          store.encode(training), user);
+        store.db.update("UPDATE project_practice_rounds SET body=?,lease_until=0,lease_token=NULL WHERE user_id=? AND round_id=?",
+          store.encode(training), user, roundId);
         return null;
       });
     } catch (Exception e) {
-      store.db.update("UPDATE project_trials SET lease_until=0,lease_token=NULL WHERE user_id=? AND lease_token=?", user, token);
+      store.db.update("UPDATE project_practice_rounds SET lease_until=0,lease_token=NULL WHERE user_id=? AND round_id=? AND lease_token=?", user, roundId, token);
       throw error(503, "补答已保存，复测报告生成失败，请重试");
     }
-    return practice.get(user, projectId);
+    return practice.get(user, projectId, roundId);
   }
+
+  private record Generation(String roundId, Map<String, Object> input) {}
 
   private Map<String, Object> demoComparison(Map<String, Object> claim) {
     var before = ReportComparison.answered(claim, "previousTurns").get(0);

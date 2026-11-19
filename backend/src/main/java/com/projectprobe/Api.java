@@ -113,6 +113,14 @@ public class Api {
     return projects.save(auth.user(r), null, b);
   }
 
+  @PostMapping("/projects/batch")
+  Object createProjects(
+    HttpServletRequest r,
+    @RequestBody Map<String, Object> b
+  ) {
+    return projects.createBatch(auth.user(r), b);
+  }
+
   @PutMapping("/projects/{id}")
   Object saveProject(
     HttpServletRequest r,

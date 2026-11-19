@@ -4,9 +4,12 @@ import static com.projectprobe.Store.*;
 
 import java.util.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ProjectService {
+
+  private static final int MAX_BATCH_SIZE = 10;
 
   final Store s;
   final ModelService model;
@@ -87,65 +90,130 @@ public class ProjectService {
       if (
         old != null && !Objects.equals(old.get("version"), input.get("version"))
       ) throw error(409, "项目已在其他页面修改，请重新加载后保存");
-      var body = new LinkedHashMap<String, Object>();
-      for (String field : List.of(
-        "name",
-        "background",
-        "targetRole",
-        "stack",
-        "responsibility",
-        "resume",
-        "architecture",
-        "implementation",
-        "problems",
-        "verification",
-        "materials"
-      )) {
-        String v = str(input, field);
-        if (v.length() > 12000) throw error(400, "单项材料最多 12000 字");
-        body.put(field, v);
-      }
-      required(body, "name", 100);
-      required(body, "responsibility", 12000);
-      if (s.encode(body).length() > 45000) throw error(
-        400,
-        "项目总材料请控制在 45000 字以内"
-      );
-      if (
-        old != null &&
-        body
-          .entrySet()
-          .stream()
-          .allMatch(e -> Objects.equals(old.get(e.getKey()), e.getValue()))
-      ) return old;
-      body.put("facts", List.of());
-      body.put("factsConfirmed", false);
-      int version =
-        old == null ? 1 : ((Number) old.get("version")).intValue() + 1;
-      if (old == null) s.db.update(
-        "INSERT INTO projects VALUES (?,?,?,?,?)",
-        id,
-        user,
-        s.encode(body),
-        version,
-        now()
-      );
-      else s.db.update(
-        "UPDATE projects SET body=?,version=?,updated_at=? WHERE id=?",
-        s.encode(body),
-        version,
-        now(),
-        id
-      );
-      s.db.update(
-        "INSERT INTO project_revisions VALUES (?,?,?)",
-        id,
-        version,
-        s.encode(body)
-      );
-      if (journey != null) journey.record(user, "MATERIAL_SAVED", id);
-      return get(user, id);
+      return saveLocked(user, id, old, materialBody(input));
     });
+  }
+
+  List<Map<String, Object>> createBatch(String user, Map<String, Object> input) {
+    if (
+      !(input.get("projects") instanceof List<?> entries) ||
+      entries.isEmpty() || entries.size() > MAX_BATCH_SIZE
+    ) throw error(400, "每次可保存 1–" + MAX_BATCH_SIZE + " 个项目");
+
+    String requestKey = input.get("requestKey") == null
+      ? ""
+      : required(input, "requestKey", 100);
+    var bodies = new ArrayList<Map<String, Object>>(entries.size());
+    for (int i = 0; i < entries.size(); i++) {
+      if (!(entries.get(i) instanceof Map<?, ?> project)) throw error(
+        400, "第 " + (i + 1) + " 个项目的格式不正确"
+      );
+      try {
+        bodies.add(materialBody(project));
+      } catch (ResponseStatusException e) {
+        throw error(400, "第 " + (i + 1) + " 个项目：" + e.getReason());
+      }
+    }
+
+    String fingerprint = requestKey.isEmpty() ? "" : Auth.hash(s.encode(bodies));
+    return s.locked(user, () -> {
+      if (!requestKey.isEmpty()) {
+        var existing = s.db.queryForList(
+          "SELECT fingerprint,project_ids FROM project_batch_creations WHERE user_id=? AND request_key=?",
+          user,
+          requestKey
+        );
+        if (!existing.isEmpty()) {
+          var saved = existing.get(0);
+          if (!fingerprint.equals(saved.get("fingerprint"))) throw error(
+            409, "本次保存标识已用于另一批项目，请重新提交"
+          );
+          return Arrays.stream(str(saved, "project_ids").split(","))
+            .map(id -> get(user, id))
+            .toList();
+        }
+      }
+      var projects = new ArrayList<Map<String, Object>>(bodies.size());
+      for (var body : bodies) projects.add(saveLocked(user, id(), null, body));
+      if (!requestKey.isEmpty()) {
+        var ids = projects.stream().map(project -> str(project, "id")).toList();
+        s.db.update(
+          "INSERT INTO project_batch_creations(user_id,request_key,fingerprint,project_ids) VALUES (?,?,?,?)",
+          user,
+          requestKey,
+          fingerprint,
+          String.join(",", ids)
+        );
+      }
+      return projects;
+    });
+  }
+
+  private Map<String, Object> materialBody(Map<?, ?> input) {
+    var body = new LinkedHashMap<String, Object>();
+    for (String field : List.of(
+      "name",
+      "background",
+      "targetRole",
+      "stack",
+      "responsibility",
+      "resume",
+      "architecture",
+      "implementation",
+      "problems",
+      "verification",
+      "materials"
+    )) {
+      String v = Objects.toString(input.get(field), "");
+      if (v.length() > 12000) throw error(400, "单项材料最多 12000 字");
+      body.put(field, v);
+    }
+    required(body, "name", 100);
+    required(body, "responsibility", 12000);
+    if (s.encode(body).length() > 45000) throw error(
+      400,
+      "项目总材料请控制在 45000 字以内"
+    );
+    return body;
+  }
+
+  private Map<String, Object> saveLocked(
+    String user,
+    String id,
+    Map<String, Object> old,
+    Map<String, Object> body
+  ) {
+    if (
+      old != null &&
+      body.entrySet().stream().allMatch(e -> Objects.equals(old.get(e.getKey()), e.getValue()))
+    ) return old;
+    body.put("facts", List.of());
+    body.put("factsConfirmed", false);
+    int version = old == null ? 1 : ((Number) old.get("version")).intValue() + 1;
+    String encoded = s.encode(body);
+    if (old == null) s.db.update(
+      "INSERT INTO projects VALUES (?,?,?,?,?)",
+      id,
+      user,
+      encoded,
+      version,
+      now()
+    );
+    else s.db.update(
+      "UPDATE projects SET body=?,version=?,updated_at=? WHERE id=?",
+      encoded,
+      version,
+      now(),
+      id
+    );
+    s.db.update(
+      "INSERT INTO project_revisions VALUES (?,?,?)",
+      id,
+      version,
+      encoded
+    );
+    if (journey != null) journey.record(user, "MATERIAL_SAVED", id);
+    return get(user, id);
   }
 
   Map<String, Object> extract(String user, String id) {
