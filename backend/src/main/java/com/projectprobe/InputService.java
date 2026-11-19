@@ -340,7 +340,7 @@ public class InputService {
           if (response.statusCode() != 200) throw error(
             503,
             response.statusCode() == 403
-              ? "语音模型额度或权限不可用，请使用文字回答"
+              ? "语音转写暂不可用，请使用文字回答"
               : "语音识别服务暂不可用，请稍后再试"
           );
           if (response.body().length() > 100000) throw error(

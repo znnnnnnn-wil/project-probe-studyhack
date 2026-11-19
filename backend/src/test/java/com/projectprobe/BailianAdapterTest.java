@@ -185,7 +185,7 @@ class BailianAdapterTest {
       403,
       "{\"error\":{\"code\":\"AllocationQuota.FreeTierOnly\",\"message\":\"sensitive-provider-text\"}}"
     );
-    assertTrue(reason.contains("免费额度"));
+    assertTrue(reason.contains("文字模型当前不可用"));
     assertFalse(reason.contains("sensitive-provider-text"));
     assertFalse(
       model

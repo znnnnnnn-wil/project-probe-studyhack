@@ -12,7 +12,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 @SpringBootTest(properties = {"spring.datasource.url=${PROBE_TEST_DB_URL:jdbc:h2:mem:account-security;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1}",
   "spring.datasource.username=${PROBE_TEST_DB_USER:sa}", "spring.datasource.password=${PROBE_TEST_DB_PASSWORD:}",
-  "app.model-mode=demo", "app.payment.mode=mock", "app.payment.reconcile-enabled=false"})
+  "app.model-mode=demo"})
 class AccountSecurityTest {
   @Autowired Store s;
   @Autowired Auth auth;

@@ -14,9 +14,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class ModelService {
 
-  static final String FREE_QUOTA_ERROR =
-    "百炼免费额度已耗尽或不可用，已停止请求；不会自动切换付费模型";
-
   private static final org.slf4j.Logger log = LoggerFactory.getLogger(
     ModelService.class
   );
@@ -238,7 +235,7 @@ public class ModelService {
           s.json.readTree(payload).path("error").path("code").asText()
         )
       ) {
-        return FREE_QUOTA_ERROR;
+        return "文字模型当前不可用，请稍后重试";
       }
     } catch (Exception ignored) {}
     return "模型请求失败，请检查服务端模型配置";

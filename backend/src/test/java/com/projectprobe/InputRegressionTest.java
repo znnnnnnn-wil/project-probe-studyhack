@@ -27,7 +27,6 @@ import org.springframework.web.server.ResponseStatusException;
     "app.origin=http://localhost:5173",
     "spring.datasource.url=jdbc:h2:mem:input-tests;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
     "app.model-mode=demo",
-    "app.payment.mode=mock",
     "app.speech-enabled=false",
   }
 )
@@ -51,9 +50,6 @@ class InputRegressionTest {
 
   @Autowired
   ProjectPractice practice;
-
-  @Autowired
-  PaymentService payments;
 
   @Autowired
   TrainingService trainings;
@@ -990,8 +986,6 @@ class InputRegressionTest {
         Map.of("version", project.get("version"), "facts", project.get("facts"))
       )
     );
-    var order = payments.create(owner, Map.of("requestKey", id()));
-    payments.mock(owner, str(order, "id"));
     var training = trainings.start(
       owner,
       Map.of("projectId", project.get("id"), "requestKey", id())
