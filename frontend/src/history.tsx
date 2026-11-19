@@ -1,22 +1,106 @@
 import { useState } from "react";
-import { ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, FolderOpen, MessageSquare, RefreshCw } from "lucide-react";
 import { go } from "./api";
 import type { Training, TrainingSummary, ListPage } from "./types";
-import { Empty, Loading, PageHead, statusLabel, Button } from "./ui";
+import { Empty, Loading, statusLabel, Button } from "./ui";
 import type { Actions } from "./ui";
 import { useApiResource } from "./use-api-resource";
 import { TrainingSelect } from "./training-select";
+import { PracticeArchive } from "./practice-archive";
+import "./history.css";
 
 type PracticeRecord = {
   projectId: string;
-  roundId?: string;
-  roundNumber?: number;
+  roundId: string;
+  roundNumber: number;
   name: string;
   status: string;
   answeredCount: number;
   maxTurns: number;
-  retestCompleted: boolean;
+  retestCompleted?: boolean;
+  startedAt: number;
+  interviewTopic: string;
+  totalScore?: number | null;
+  hasScoring?: boolean;
+  prioritySuggestion: string;
 };
+
+function groupByProject(records: PracticeRecord[]) {
+  const projects = new Map<string, PracticeRecord[]>();
+  for (const record of records) {
+    const rounds = projects.get(record.projectId);
+    if (rounds) rounds.push(record);
+    else projects.set(record.projectId, [record]);
+  }
+  for (const rounds of projects.values()) {
+    rounds.sort((a, b) => b.roundNumber - a.roundNumber);
+  }
+  return projects;
+}
+
+function practiceSummary(rounds: PracticeRecord[]) {
+  const completed = rounds.filter(({ status }) => status === "COMPLETED").length;
+  const active = rounds.filter(({ status }) => ["ACTIVE", "GENERATING", "PENDING"].includes(status)).length;
+  const failed = rounds.filter(({ status }) => status === "FAILED").length;
+  return [`共训练 ${rounds.length} 次`, `已完成 ${completed} 次`,
+    active ? `进行中 ${active} 次` : "", failed ? `待恢复 ${failed} 次` : ""].filter(Boolean).join(" · ");
+}
+
+const historyDate = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function resumeLabel(record: PracticeRecord) {
+  const reporting = record.answeredCount >= record.maxTurns;
+  if (record.status === "FAILED") return reporting ? "重试生成报告" : "恢复训练";
+  if (record.status === "GENERATING") return "查看进度";
+  if (["ACTIVE", "PENDING"].includes(record.status)) return "继续训练";
+  return "";
+}
+
+function PracticeRound({ record, current, archivePath }: {
+  record: PracticeRecord;
+  current: boolean;
+  archivePath: string;
+}) {
+  const complete = record.status === "COMPLETED";
+  const reporting = record.status === "GENERATING" && record.answeredCount >= record.maxTurns;
+  const date = new Date(record.startedAt);
+  const resume = current ? resumeLabel(record) : "";
+  return (
+    <article className="practice-history-round">
+      <div className="card-icon"><MessageSquare aria-hidden="true" /></div>
+      <div>
+        <div className="practice-history-round-title">
+          <h2>第 {record.roundNumber} 次面试</h2>
+          <span className="badge">{reporting ? "报告生成中" : statusLabel[record.status]}</span>
+        </div>
+        <p className="practice-history-meta">
+          {record.interviewTopic && <span>{record.interviewTopic}</span>}
+          {record.startedAt > 0 && Number.isFinite(date.getTime()) && (
+            <time dateTime={date.toISOString()}>{historyDate.format(date)}</time>
+          )}
+          <span>已答完 {record.answeredCount} / {record.maxTurns} 题</span>
+          {record.retestCompleted && <span>专项复测已完成</span>}
+        </p>
+        {complete && (
+          <div className="practice-history-outcome">
+            <strong>{typeof record.totalScore === "number" ? `评分 ${record.totalScore} / 100` :
+              record.hasScoring ? "部分维度已评分" : "未评分"}</strong>
+            {record.prioritySuggestion && <p><strong>优先改进</strong> {record.prioritySuggestion}</p>}
+          </div>
+        )}
+      </div>
+      <div className="practice-history-actions">
+        <a className={"button" + (resume ? " secondary" : "")} href={archivePath}>
+          {complete ? "查看报告与对话" : "查看对话"}
+        </a>
+        {resume && <a className="button" href={`#/projects/${encodeURIComponent(record.projectId)}?interview=1&from=history`}>{resume}</a>}
+      </div>
+    </article>
+  );
+}
 
 function Transcript({ id }: { id: string }) {
   const { data, error, reload } = useApiResource<Training>("/trainings/" + id);
@@ -93,108 +177,154 @@ function HistoryRecord({ training: t }: { training: TrainingSummary }) {
   );
 }
 
-export function History(_props: Actions) {
+function LegacyHistory({ busy, collapsed, showEmpty }: {
+  busy: boolean;
+  collapsed: boolean;
+  showEmpty: boolean;
+}) {
   const [key, setKey] = useState("");
   const [offset, setOffset] = useState(0);
-  const practice = useApiResource<PracticeRecord[]>("/practice-history");
+  const [open, setOpen] = useState(false);
   const page = useApiResource<ListPage<TrainingSummary>>(
     "/training-page?limit=20&offset=" +
       offset +
       "&key=" +
       encodeURIComponent(key),
   );
-  const choices =
-    useApiResource<{ key: string; name: string }[]>("/training-projects");
-  return (
-    <section className="page">
-      <PageHead
-        eyebrow="每一步都有记录"
-        title="训练记录"
-        text="回看已提交的回答、复盘和专项复测，或继续尚未完成的训练。"
-      />
-      {practice.error && (
-        <div role="alert">
-          {practice.error} <Button secondary onClick={practice.reload}>重新读取项目训练</Button>
-        </div>
+  const choices = useApiResource<{ key: string; name: string }[]>(
+    !collapsed || open ? "/training-projects" : null,
+  );
+  const hasChoices = !!choices.data?.length;
+  if (!page.data && !page.error && !open && !hasChoices) return collapsed ? null : <Loading />;
+  if (page.data?.total === 0 && !key && !offset && !hasChoices) {
+    return showEmpty ? <Empty
+      title="还没有开始训练"
+      text="保存项目材料后，即可开始训练。"
+      action={() => go("/projects")}
+    /> : null;
+  }
+  const content = (
+    <>
+      <TrainingSelect label="筛选训练项目" value={key} disabled={busy || !choices.data}
+        onChange={value => { setKey(value); setOffset(0); }}
+        options={[{ value: "", label: "全部项目" }, ...(choices.data || []).map(choice => ({ value: choice.key, label: choice.name }))]} />
+      {choices.error && (
+        <p role="alert">
+          {choices.error}{" "}
+          <Button secondary onClick={choices.reload}>重试项目筛选</Button>
+        </p>
       )}
-      {!!practice.data?.length && (
-        <section className="panel history-list" aria-label="项目练习">
-          <h2>项目练习</h2>
-          {practice.data.map(record => (
-            <article className="history-record" key={record.roundId ?? record.projectId}>
-              <a className="history-link" href={
-                `#/projects/${record.projectId}` +
-                (record.status === "COMPLETED" && record.roundId ? `?roundId=${encodeURIComponent(record.roundId)}` : "")
-              }>
-                <div className="card-icon"><MessageSquare /></div>
-                <div>
-                  <h3>{record.name}</h3>
-                  <p>{record.roundNumber ? `第 ${record.roundNumber} 轮 · ` : ""}已回答 {record.answeredCount} / {record.maxTurns} 题
-                    {record.retestCompleted && " · 专项复测已完成"}
-                    {record.status === "COMPLETED" ? " · 查看复盘" : " · 继续训练"}
-                  </p>
-                </div>
-                <span className="badge">{statusLabel[record.status]}</span>
-                <ChevronRight />
-              </a>
-            </article>
+      {page.error ? (
+        <div role="alert">
+          {page.error}{" "}
+          <Button secondary onClick={page.reload}>重新读取记录</Button>
+        </div>
+      ) : !page.data ? (
+        <Loading />
+      ) : !page.data.total ? (
+        <Empty title="没有匹配的旧版训练" text="选择其他项目可继续回看。" />
+      ) : (
+        <>
+          {page.data.items.map((training) => <HistoryRecord key={training.id} training={training} />)}
+          <div className="action-row" aria-label="训练记录分页">
+            <Button secondary disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 20))}>
+              上一页
+            </Button>
+            <span>第 {Math.floor(offset / 20) + 1} 页 · 共 {page.data.total} 条</span>
+            <Button secondary disabled={!page.data.hasMore} onClick={() => setOffset(offset + 20)}>
+              下一页
+            </Button>
+          </div>
+        </>
+      )}
+    </>
+  );
+  return collapsed ? (
+    <details className="panel history-list history-legacy" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary>旧版训练记录</summary>
+      {open && content}
+    </details>
+  ) : <div className="panel history-list history-legacy">{content}</div>;
+}
+
+type HistoryProps = Actions & { projectId?: string; roundId?: string };
+
+export function History({ busy, run, projectId, roundId }: HistoryProps) {
+  const practice = useApiResource<PracticeRecord[]>("/practice-history");
+  const projects = groupByProject(practice.data ?? []);
+  const rounds = projectId ? projects.get(projectId) : undefined;
+  const record = rounds?.find(round => round.roundId === roundId);
+  const projectHistoryPath = projectId ? `#/history/${encodeURIComponent(projectId)}` : "#/history";
+  const retry = practice.error && (
+    <div className="panel practice-history-error" role="alert">
+      <span>{practice.error}</span>
+      <Button secondary onClick={practice.reload}>重新读取项目训练</Button>
+    </div>
+  );
+  if (projectId && roundId) {
+    return (
+      <section className="page practice-history-page">
+        <a className="practice-history-back" href={projectHistoryPath}>
+          <ArrowLeft size={16} aria-hidden="true" /> 返回项目训练记录
+        </a>
+        <div className="page-head">
+          <div>
+            <h1>{record ? `第 ${record.roundNumber} 次面试` : "面试记录"}</h1>
+            {rounds && <p>{rounds[0].name}</p>}
+          </div>
+        </div>
+        <PracticeArchive key={`${projectId}/${roundId}`} projectId={projectId} roundId={roundId} run={run} busy={busy} onScored={practice.reload} />
+      </section>
+    );
+  }
+  if (projectId) {
+    return (
+      <section className="page practice-history-page">
+        <a className="practice-history-back" href="#/history">
+          <ArrowLeft size={16} aria-hidden="true" /> 返回训练记录
+        </a>
+        <div className="page-head">
+          <div>
+            <h1>{rounds?.[0].name || "项目训练记录"}</h1>
+            {rounds && <p>{practiceSummary(rounds)}</p>}
+          </div>
+        </div>
+        {retry || (practice.loading ? <Loading /> : rounds ? (
+          <section className="panel practice-history-rounds" aria-label="面试记录">
+            {rounds.map((round, index) => (
+              <PracticeRound key={round.roundId} record={round} current={index === 0}
+                archivePath={`${projectHistoryPath}/${encodeURIComponent(round.roundId)}`} />
+            ))}
+          </section>
+        ) : <Empty title="没有找到这个项目的训练记录" text="返回训练记录查看其他项目。" />)}
+      </section>
+    );
+  }
+  return (
+    <section className="page practice-history-page">
+      <div className="page-head">
+        <div>
+          <h1>训练记录</h1>
+          <p>按项目回看每次面试的对话和复盘。</p>
+        </div>
+      </div>
+      {retry}
+      {practice.loading && <Loading />}
+      {projects.size > 0 && (
+        <section className="panel practice-history-projects" aria-label="项目训练">
+          {Array.from(projects, ([id, trainings]) => (
+            <a className="practice-history-project" key={id} href={`#/history/${encodeURIComponent(id)}`}>
+              <div className="card-icon"><FolderOpen aria-hidden="true" /></div>
+              <div>
+                <h2>{trainings[0].name || "未命名项目"}</h2>
+                <p>{practiceSummary(trainings)}</p>
+              </div>
+              <ChevronRight size={18} aria-hidden="true" />
+            </a>
           ))}
         </section>
       )}
-      <div className="panel history-list">
-        <TrainingSelect label="筛选训练项目" value={key} disabled={_props.busy || !choices.data}
-          onChange={value => { setKey(value); setOffset(0); }}
-          options={[{ value: "", label: "全部项目" }, ...(choices.data || []).map(choice => ({ value: choice.key, label: choice.name }))]} />
-        {choices.error && (
-          <p role="alert">
-            {choices.error}{" "}
-            <Button secondary onClick={choices.reload}>
-              重试项目筛选
-            </Button>
-          </p>
-        )}
-        {page.error ? (
-          <div role="alert">
-            {page.error}{" "}
-            <Button secondary onClick={page.reload}>
-              重新读取记录
-            </Button>
-          </div>
-        ) : !page.data ? (
-          <Loading />
-        ) : !page.data.total && (practice.loading || practice.data?.length) ? null : !page.data.total ? (
-          <Empty
-            title="还没有开始训练"
-            text="保存项目材料后，即可开始训练。"
-            action={() => go("/projects")}
-          />
-        ) : (
-          <>
-            {page.data.items.map((training) => (
-              <HistoryRecord key={training.id} training={training} />
-            ))}
-            <div className="action-row" aria-label="训练记录分页">
-              <Button
-                secondary
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - 20))}
-              >
-                上一页
-              </Button>
-              <span>
-                第 {Math.floor(offset / 20) + 1} 页 · 共 {page.data.total} 条
-              </span>
-              <Button
-                secondary
-                disabled={!page.data.hasMore}
-                onClick={() => setOffset(offset + 20)}
-              >
-                下一页
-              </Button>
-            </div>
-          </>
-        )}
-      </div>
+      {!practice.loading && <LegacyHistory busy={busy} collapsed={projects.size > 0} showEmpty={practice.data?.length === 0} />}
     </section>
   );
 }
