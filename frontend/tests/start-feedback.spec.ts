@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { demoProject } from "../src/api";
+import { mockPracticeVoice } from "./practice-voice-fixture";
 
 for (const viewport of [
   { width: 1440, height: 900 },
@@ -9,6 +10,7 @@ for (const viewport of [
     page,
   }) => {
     await page.setViewportSize(viewport);
+    await mockPracticeVoice(page, () => "合成语音回答");
     const headers = {
       Origin: new URL(test.info().project.use.baseURL!).origin,
     };
@@ -35,7 +37,7 @@ for (const viewport of [
     await page.goto("/#/projects/" + project.id + "?interview=1");
     const practice = page.getByRole("dialog", { name: "项目面试室" });
     const start = practice.getByRole("button", {
-      name: "开始五轮训练",
+      name: "同意并开始语音面试",
       exact: true,
     });
     await expect(start).toBeEnabled();
@@ -55,7 +57,7 @@ for (const viewport of [
       path: `test-results/start-feedback-${viewport.width}.png`,
     });
     await retry.click();
-    await expect(practice.getByLabel("我的回答")).toBeEditable();
+    await expect(practice.getByText(/^第 1 \/ \d+ 题$/)).toBeVisible();
     await expect(error).toHaveCount(0);
     expect(attempts).toBe(2);
   });
