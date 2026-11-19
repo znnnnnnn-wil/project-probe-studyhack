@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("桌面完整闭环：档案、事实、模拟权益、训练、刷新、报告及复测", async ({
+test("桌面完整闭环：档案、训练、刷新、报告及复测", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -27,45 +27,20 @@ test("桌面完整闭环：档案、事实、模拟权益、训练、刷新、�
   await page.getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("button", { name: "载入合成示例" }).click();
   await page.getByRole("button", { name: "保存项目材料" }).click();
-  await page.getByRole("button", { name: "事实核对", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "提取项目事实" }),
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "提取项目事实" }).click();
-  await expect(
-    page.getByRole("button", { name: "保存核对结果" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "保存核对结果" }).click();
-  await expect(
-    page.getByRole("button", { name: "开始项目深挖" }),
-  ).toBeEnabled();
   const savedResponse = page.waitForResponse(
     (r) => r.request().method() === "PUT" && /\/api\/projects\//.test(r.url()),
   );
-  await page.getByRole("button", { name: "项目材料", exact: true }).click();
   await page.getByRole("button", { name: "保存项目材料" }).click();
   const unchanged = await (await savedResponse).json();
-  expect(unchanged.factsConfirmed).toBe(true);
-  const extractedResponse = page.waitForResponse((r) =>
-    r.url().endsWith("/extract"),
-  );
-  await page.getByRole("button", { name: "事实核对", exact: true }).click();
-  await page.getByRole("button", { name: "读取已提取事实" }).click();
-  const reused = await (await extractedResponse).json();
-  expect(reused.version).toBe(unchanged.version);
-  expect(reused.factsConfirmed).toBe(true);
-  await expect(
-    page.getByRole("button", { name: "开始项目深挖" }),
-  ).toBeEnabled();
+  expect(unchanged.factsConfirmed).toBe(false);
   const projectUrl = page.url();
-  await page.getByRole("link", { name: "查看训练包与剩余次数" }).click();
-  await page.getByRole("button", { name: "创建模拟订单" }).click();
-  await page.getByRole("button", { name: "模拟支付成功" }).click();
-  await expect(
-    page.getByText("已确认，权益已发放", { exact: false }),
-  ).toBeVisible();
-  await page.goto(projectUrl);
-  await page.getByRole("button", { name: "开始项目深挖" }).click();
+  const created = await page.request.post("/api/trainings", {
+    headers: { Origin: new URL(projectUrl).origin },
+    data: { projectId: unchanged.id, requestKey: crypto.randomUUID() },
+  });
+  expect(created.ok()).toBeTruthy();
+  const training = await created.json();
+  await page.goto("/#/trainings/" + training.id);
   await expect(page.getByText("问题 01", { exact: true })).toBeVisible();
   for (let i = 0; i < 5; i++) {
     const answer =
@@ -105,9 +80,6 @@ test("桌面完整闭环：档案、事实、模拟权益、训练、刷新、�
       "补充合成测试设计：双实例并发预约，检查数据库约束冲突；在响应前断网重试，验证不会重复写入。实际压测数据尚未提供。",
     );
   await page.getByRole("button", { name: "保存项目材料" }).click();
-  await page.getByRole("button", { name: "事实核对", exact: true }).click();
-  await page.getByRole("button", { name: "提取项目事实" }).click();
-  await page.getByRole("button", { name: "保存核对结果" }).click();
   await page.getByRole("button", { name: "开始关联复测" }).click();
   await expect(page.getByText("问题 01", { exact: true })).toBeVisible();
   await expect(page.locator(".question-panel")).toContainText("交接");

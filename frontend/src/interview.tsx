@@ -279,7 +279,7 @@ export function Interview({ id, run, busy }: Actions & { id: string }) {
                 {t.status === "FAILED"
                   ? "生成遇到问题，回答仍在"
                   : "REFUNDED" === t.status
-                    ? "次数已返还，记录仍保留"
+                    ? "训练已终止，记录仍保留"
                     : "正在准备下一步"}
               </h3>
               <p>
@@ -296,16 +296,6 @@ export function Interview({ id, run, busy }: Actions & { id: string }) {
                     onClick={() => action("retry")}
                   >
                     <RefreshCw size={16} /> 重试 / 恢复生成
-                  </Button>
-                  <Button
-                    secondary
-                    disabled={
-                      busy ||
-                      (t.status === "GENERATING" && t.leaseUntil > Date.now())
-                    }
-                    onClick={() => action("refund")}
-                  >
-                    终止并返还本次次数
                   </Button>
                 </div>
               )}
