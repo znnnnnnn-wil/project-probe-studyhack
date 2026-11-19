@@ -3,15 +3,52 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 17% 21%, #fffdf5b8, transparent 61%),
+    linear-gradient(90deg, transparent 73%, #b7ada126 73.2%, transparent 73.5%),
+    linear-gradient(180deg, #e5e2db 0%, #d7d5ce 73%, #c1beb5 100%);
+}
+/* 磨砂窗和远处木墙只提供景深；所有装饰都位于人物后方。 */
+.avatar-shell::before,
+.avatar-shell::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+.avatar-shell::before {
+  top: -8%;
+  left: -9%;
+  width: 37%;
+  height: 100%;
+  background:
+    linear-gradient(180deg, transparent 32%, #dddcd484 32.2%, #dddcd484 33%, transparent 33.2%, transparent 68%, #dddcd484 68.2%, #dddcd484 69%, transparent 69.2%),
+    repeating-linear-gradient(90deg, #f8f9f1c9 0 28%, #c9ccc1ab 28% 29%, #fffdf4d6 29% 59%, #d2d2c8a6 59% 60%);
+  box-shadow: 16px 0 50px #fdf9ed5c;
+  filter: blur(2px);
+  transform: skewY(-7deg);
+}
+.avatar-shell::after {
+  top: 5%;
+  right: -7%;
+  bottom: 0;
+  width: 26%;
+  background:
+    linear-gradient(180deg, transparent 69%, #b3a59426 69.3%, #c0b3a11f 70%, transparent 70.3%),
+    repeating-linear-gradient(90deg, #c8bca83d 0 7%, #b8a88d2b 7.5% 8%, #d9cfbe40 8.5% 16%);
+  filter: blur(2px);
+  transform: skewY(3deg);
 }
 .avatar-portrait {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: 50% 25%;
+  object-position: 50% 8%;
   transition: opacity 0.45s;
 }
 .avatar-portrait.is-hidden {
@@ -20,6 +57,7 @@
 .avatar-mount {
   position: absolute;
   inset: 0;
+  z-index: 1;
   opacity: 0;
   transition: opacity 0.45s;
 }
@@ -34,21 +72,23 @@
 .avatar-loading {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 9px;
   padding: 16px;
   text-align: center;
-  color: #eaf0ff;
+  color: #47524f;
   font-size: 12px;
+  background: #f3f0e963;
 }
 
 .auth-stage,
 .live-stage {
   background:
-    radial-gradient(ellipse at 24% 14%, #d9e5ef 0%, transparent 58%),
-    linear-gradient(145deg, #b9cbdc 0%, #859bb3 58%, #516783 100%);
+    radial-gradient(ellipse at 20% 16%, #fffaf0 0%, transparent 65%),
+    linear-gradient(145deg, #e7e3da 0%, #d7d4ca 58%, #b9b5ac 100%);
 }
 
 /* 登录页左侧舞台 */
@@ -67,7 +107,7 @@
   gap: 10px;
   font-size: 16px;
   font-weight: 750;
-  color: var(--ink);
+  color: #34413c;
 }
 .auth-caption {
   position: absolute;
@@ -75,7 +115,8 @@
   z-index: 1;
   padding: clamp(20px, 3.5vw, 48px);
   color: #fff;
-  background: linear-gradient(transparent, #162551db);
+  padding-top: clamp(72px, 9vw, 130px);
+  background: linear-gradient(transparent, #28352e96 50%, #22312bdf);
 }
 .auth-caption h1 {
   margin: 0;
@@ -86,7 +127,7 @@
 .auth-caption p {
   max-width: 52ch;
   margin: 8px 0 0;
-  color: #eaf0ff;
+  color: #e8eee7;
   font-size: 12px;
   line-height: 1.8;
 }
@@ -99,13 +140,15 @@
   border-radius: var(--r-lg);
   overflow: hidden;
   color: #fff;
+  box-shadow: inset 0 0 0 1px #6a706015;
 }
 .live-stage::after {
   content: "";
   pointer-events: none;
   position: absolute;
+  z-index: 2;
   inset: 67% 0 0;
-  background: linear-gradient(transparent, #192b447a);
+  background: linear-gradient(transparent, #24332c9c);
 }
 .stage-top {
   position: absolute;
@@ -123,18 +166,18 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border: 1px solid #ffffff28;
-  border-radius: 6px;
-  background: #263a6194;
+  border: 1px solid #ffffff69;
+  border-radius: 20px;
+  background: #f7f7efcc;
   backdrop-filter: blur(10px);
-  color: #f1f5ff;
+  color: #394f44;
   font-size: 11px;
   white-space: nowrap;
 }
 .live-indicator .status-dot {
   width: 5px;
   height: 5px;
-  background: #a6c7ff;
+  background: #5e876f;
 }
 .stage-subtitle {
   position: absolute;
@@ -146,9 +189,10 @@
   font-size: 13px;
   line-height: 1.7;
   text-align: center;
-  background: #12192799;
-  color: #ebeff6;
-  border-radius: 7px;
+  background: #23322bba;
+  color: #f3f5ee;
+  border: 1px solid #ffffff17;
+  border-radius: 10px;
   backdrop-filter: blur(8px);
   max-height: 34%;
   overflow: auto;
@@ -166,11 +210,12 @@
 }
 .stage-name strong {
   font-size: 17px;
-  font-weight: 500;
+  font-weight: 600;
+  text-shadow: 0 1px 8px #17231e48;
 }
 .stage-name p {
   font-size: 11px;
-  color: #d6e4fc;
+  color: #e3ebe1;
   margin-top: 4px;
 }
 .camera-box {
@@ -183,10 +228,10 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid #ffffff2c;
-  border-radius: 7px;
-  background: #203354e8;
-  color: #d2e1ff;
+  border: 1px solid #ffffff45;
+  border-radius: 10px;
+  background: #293b33d9;
+  color: #e5eee2;
   font-size: 10px;
   overflow: hidden;
   text-align: center;
@@ -318,6 +363,7 @@
   }
   .auth-caption {
     padding-block: 12px;
+    padding-top: 45px;
   }
   .auth-caption p {
     display: none;

@@ -1,4 +1,6 @@
 import type { FacePresence } from "./use-face-presence";
+import { prepareInterviewerMaterials } from "./interviewer-materials";
+import { addInterviewerGlasses } from "./interviewer-accessories";
 
 export type AvatarState = "idle" | "listening" | "thinking" | "speaking";
 
@@ -13,11 +15,13 @@ export type RigInput = {
 export type InterviewerRig = {
   root: import("three").Object3D;
   headPosition: import("three").Vector3;
+  headTop: number;
+  scale: number;
   update: (input: RigInput) => void;
   dispose: () => void;
 };
 
-const MODEL_URL = "/models/interviewer.glb";
+const MODEL_URL = "/models/interviewer-v2.glb";
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 const easeOutCubic = (x: number) => 1 - Math.pow(1 - x, 3);
 // 闭睑快、睁睑慢，并带短暂停留，避免对称正弦的机械感。
@@ -35,6 +39,7 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
   const { GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js");
   const gltf = await new GLTFLoader().loadAsync(MODEL_URL);
   const root = gltf.scene;
+  const disposeMaterials = prepareInterviewerMaterials(THREE, root);
   root.updateMatrixWorld(true);
 
   // GLTFLoader 会清洗节点名（去掉冒号），三种写法都试。
@@ -49,6 +54,7 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
   const head = bone("Head");
   const shoulders = [bone("LeftShoulder"), bone("RightShoulder")];
   const forearms = [bone("LeftForeArm"), bone("RightForeArm")];
+  addInterviewerGlasses(THREE, root, head);
 
   // 放松垂臂：把 T-pose 的上臂旋到自然下垂方向。
   for (const side of ["Left", "Right"]) {
@@ -80,15 +86,6 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
     // 舌头网格在开口时会凸出下唇，口腔内壁已足够表现开口内部。
     if (/^tongue/.test(mesh.name)) mesh.visible = false;
     mesh.frustumCulled = false;
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const material of materials) {
-      if (material && /hair|eyebrow|eyelash/i.test(mesh.name + " " + material.name)) {
-        material.transparent = true;
-        material.alphaTest = 0.04;
-        material.depthWrite = true;
-        material.side = THREE.DoubleSide;
-      }
-    }
     if (mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
       morphs.push({ dict: mesh.morphTargetDictionary, values: mesh.morphTargetInfluences });
     }
@@ -101,6 +98,9 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
   };
 
   const headPosition = new THREE.Vector3();
+  const bounds = new THREE.Box3().setFromObject(root);
+  const headTop = bounds.max.y;
+  const scale = bounds.getSize(new THREE.Vector3()).y / 1.7;
   const hipsY = hips?.position.y ?? 0;
   if (head) head.getWorldPosition(headPosition);
   else {
@@ -122,12 +122,15 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
   let pitch = 0;
   let roll = 0;
   let lean = 0;
-  let smile = 0.3;
+  let smile = 0.1;
   let squint = 0.03;
   let jaw = 0;
   let funnel = 0;
   let emphasis = 0;
   let previousLevel = 0;
+  let brow = 0;
+  let pucker = 0;
+  let stretch = 0;
 
   const update = ({ state, mouthLevel, presence, time, dt }: RigInput) => {
     const speaking = state === "speaking";
@@ -154,14 +157,14 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
     if (time >= nextGaze) {
       nextGaze = time + 1.8 + Math.random() * 2.8;
       if (thinking) {
-        gazeYaw = 0.13 + Math.random() * 0.05;
+        gazeYaw = 0.07 + Math.random() * 0.04;
         gazePitch = -0.06 - Math.random() * 0.03;
       } else if (engaged || listening) {
         gazeYaw = (Math.random() - 0.5) * 0.03;
         gazePitch = (Math.random() - 0.5) * 0.02;
       } else {
-        gazeYaw = (Math.random() - 0.5) * 0.14;
-        gazePitch = (Math.random() - 0.5) * 0.07;
+        gazeYaw = (Math.random() - 0.5) * 0.07;
+        gazePitch = (Math.random() - 0.5) * 0.04;
       }
     }
     const lookYaw = engaged ? clamp(-seen!.yaw * 0.35, -0.16, 0.16) : gazeYaw;
@@ -188,15 +191,19 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
     const syllable = Math.max(0, Math.sin(time * 10.7)) * 0.6 + Math.max(0, Math.sin(time * 6.3 + 1.2)) * 0.4;
     const gate = 0.55 + 0.45 * Math.sin(time * 2.2 + Math.sin(time * 0.9));
     const targetJaw = speaking
-      ? clamp(audioDriven ? Math.pow(clamp(mouthLevel, 0, 1), 0.8) : syllable * gate, 0, 1) * 0.5
+      ? clamp(audioDriven ? Math.pow(clamp(mouthLevel, 0, 1), 0.85) : syllable * gate, 0, 1) * 0.38
       : 0;
     jaw = damp(jaw, targetJaw, targetJaw > jaw ? 0.045 : 0.11, dt);
     if (speaking && jaw - previousLevel > 0.06) emphasis = 1;
     previousLevel = jaw;
     emphasis = damp(emphasis, 0, 0.22, dt);
-    funnel = damp(funnel, speaking ? jaw * (0.16 + 0.12 * Math.sin(time * 5.1 + 1.3)) : thinking ? 0.1 : 0, 0.08, dt);
-    smile = damp(smile, speaking ? 0.22 + jaw * 0.12 : listening ? 0.34 : thinking ? 0.08 : engaged ? 0.32 : 0.3 + 0.05 * Math.sin(time * 0.31), 0.35, dt);
-    squint = damp(squint, thinking ? 0.16 : speaking ? 0.05 + jaw * 0.1 : listening ? 0.08 : 0.03, 0.3, dt);
+    const rounded = 0.5 + 0.5 * Math.sin(time * 5.1 + 1.3);
+    funnel = damp(funnel, speaking ? jaw * rounded * 0.24 : 0, 0.09, dt);
+    pucker = damp(pucker, speaking ? jaw * rounded * 0.12 : 0, 0.1, dt);
+    stretch = damp(stretch, speaking ? jaw * (1 - rounded) * 0.15 : 0, 0.1, dt);
+    smile = damp(smile, speaking ? 0.08 + jaw * 0.06 : listening ? 0.16 : thinking ? 0.03 : 0.1, 0.4, dt);
+    squint = damp(squint, thinking ? 0.07 : speaking ? 0.025 + jaw * 0.04 : listening ? 0.04 : 0.02, 0.3, dt);
+    brow = damp(brow, thinking ? 0.12 : listening ? 0.05 : speaking ? emphasis * 0.09 : 0.02, 0.4, dt);
 
     const breath = Math.sin(time * 1.35);
     const sway = engaged ? 0.4 : 1;
@@ -226,12 +233,23 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
     morph("jawOpen", jaw);
     morph("mouthSmile", smile);
     morph("mouthFunnel", clamp(funnel, 0, 0.6));
+    morph("mouthPucker", pucker);
+    morph("mouthStretch", stretch);
+    morph("mouthPress", speaking ? 0 : 0.12);
+    morph("mouthDimple", smile * 0.3);
+    morph("browInnerUpLeft", brow);
+    morph("browInnerUpRight", brow * 0.9);
+    morph("browOuterUpLeft", brow * 0.35);
+    morph("browOuterUpRight", brow * 0.4);
     // 该模型的 mouthClose 形态反而撑开嘴唇， neutral 姿态即闭口，恒置 0。
     morph("mouthClose", 0);
-    for (const mesh of teeth) mesh.visible = jaw > 0.08;
+    // Teeth stay in the mouth and are occluded by the lips, avoiding a visible
+    // on/off switch as the jaw crosses a loudness threshold.
+    for (const mesh of teeth) mesh.visible = true;
   };
 
   const dispose = () => {
+    disposeMaterials();
     root.traverse(object => {
       const mesh = object as import("three").Mesh;
       if (!mesh.isMesh) return;
@@ -247,5 +265,5 @@ export async function loadInterviewerRig(): Promise<InterviewerRig> {
     });
   };
 
-  return { root, headPosition, update, dispose };
+  return { root, headPosition, headTop, scale, update, dispose };
 }
