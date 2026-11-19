@@ -9,7 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.web.server.ResponseStatusException;
 
 @SpringBootTest(properties = {"spring.datasource.url=jdbc:h2:mem:competition-practice;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
-  "app.model-mode=demo", "app.payment.mode=mock", "app.payment.reconcile-enabled=false", "app.practice-max-turns=5"})
+  "app.model-mode=demo", "app.practice-max-turns=5"})
 class CompetitionPracticeTest {
   @Autowired Store s;
   @Autowired ProjectService projects;
@@ -21,7 +21,7 @@ class CompetitionPracticeTest {
     var project = projects.save(user, null, Map.of("name", "合成预约项目", "responsibility", "预约接口、数据库约束", "verification", "并发测试尚未完成"));
     return new String[]{user, str(project, "id")};
   }
-  @Test void completesFiveTurnsWithoutOrdersAndRejectsStaleSubmissions() {
+  @Test void completesFiveTurnsAndRejectsStaleSubmissions() {
     var f = fixture();
     var state = practice.run(f[0], f[1], Map.of());
     assertEquals(5, state.get("maxTurns"));
@@ -61,15 +61,13 @@ class CompetitionPracticeTest {
     assertEquals(compared, retest.run(f[0], f[1], input));
     assertEquals(true, practice.history(f[0]).get(0).get("retestCompleted"));
     assertTrue(practice.history(id()).isEmpty());
-    assertEquals(0, s.db.queryForObject("SELECT COUNT(*) FROM purchase_orders WHERE user_id=?", Integer.class, f[0]));
-    assertEquals(0, s.db.queryForObject("SELECT COUNT(*) FROM training_packages WHERE user_id=?", Integer.class, f[0]));
     assertThrows(ResponseStatusException.class, () -> practice.get(id(), f[1]));
   }
   @Test void resumesSavedAnswerAfterExpiredGenerationWithoutLosingOrDuplicatingIt() {
     var f = fixture();
     var state = practice.run(f[0], f[1], Map.of());
     list(state, "turns").get(0).put("answer", "已经提交的回答，故障后应保留。");
-    s.db.update("UPDATE project_trials SET body=?,status='GENERATING',lease_until=? WHERE user_id=?", s.encode(state), now()-1, f[0]);
+    s.db.update("UPDATE project_practice_rounds SET body=?,status='GENERATING',lease_until=? WHERE user_id=? AND round_id=?", s.encode(state), now()-1, f[0], str(state, "roundId"));
     assertEquals("FAILED", practice.get(f[0], f[1]).get("status"));
     var recovered = practice.run(f[0], f[1], Map.of());
     assertEquals("ACTIVE", recovered.get("status"));
@@ -136,7 +134,7 @@ class CompetitionPracticeTest {
     var state = practice.run(user, project, Map.of());
     String turnId = str(list(state, "turns").get(0), "id");
     state.put("pendingExchange", Map.of("turnId", turnId, "exchangeCount", 0, "answer", "使用唯一键。"));
-    s.db.update("UPDATE project_trials SET body=?,status='GENERATING',lease_until=? WHERE user_id=?", s.encode(state), now()-1, user);
+    s.db.update("UPDATE project_practice_rounds SET body=?,status='GENERATING',lease_until=? WHERE user_id=? AND round_id=?", s.encode(state), now()-1, user, str(state, "roundId"));
 
     var recovered = practice.run(user, project, Map.of());
     assertEquals("ACTIVE", recovered.get("status"));
