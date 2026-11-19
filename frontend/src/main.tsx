@@ -27,6 +27,9 @@ const Login = lazy(() =>
 const Editor = lazy(() =>
   import("./editor").then((module) => ({ default: module.Editor })),
 );
+const ProjectInterview = lazy(() =>
+  import("./project-practice").then((module) => ({ default: module.ProjectInterview })),
+);
 const NewProject = lazy(() =>
   import("./new-project").then((module) => ({ default: module.NewProject })),
 );
@@ -101,13 +104,12 @@ function App() {
   }, []);
   const props = { run, busy };
   const [route, search] = path.split("?", 2);
-  const [, nav, routeId] = route.split("/");
+  const [, nav, routeId, historyRoundId] = route.split("/");
+  const projectQuery = new URLSearchParams(search);
+  const projectRoundId = nav === "projects" && routeId && routeId !== "new" ? projectQuery.get("roundId") : null;
   const publicHome = path === "/" && !user;
   const publicPage = nav === "experience" || publicHome;
   const projectsActive = nav === "projects" || (!!user && !nav);
-  const modeLabel = config?.modelMode === "live"
-    ? "真实 AI 模式 · 反馈可回溯原文"
-    : "规则演示 · 非 AI 技术评估";
   useEffect(() => {
     if (
       ready &&
@@ -121,6 +123,10 @@ function App() {
       sessionStorage.setItem("auth:return", path);
     }
   }, [path, ready, user]);
+  useEffect(() => {
+    if (user && projectRoundId)
+      window.location.replace(`#/history/${routeId}/${encodeURIComponent(projectRoundId)}`);
+  }, [user, routeId, projectRoundId]);
   return (
     <>
       <header className={publicHome ? "site-header site-header--public-home" : "site-header"}>
@@ -184,9 +190,6 @@ function App() {
         </div>
         </div>
       </header>
-      {!publicPage && (
-        <div className="mode-strip"><span>{modeLabel}</span></div>
-      )}
       {(error || (!publicPage && serviceError)) && (
         <div role="alert" className="error">
           <span>{error || serviceError}</span>
@@ -233,21 +236,19 @@ function App() {
                 <Workspace {...props} />
               ) : route === "/projects/new" ? (
                 <NewProject {...props} />
+              ) : projectRoundId ? (
+                <Loading />
+              ) : projectQuery.get("interview") === "1" ? (
+                <ProjectInterview key={path} id={routeId} fromHistory={projectQuery.get("from") === "history"} {...props} />
               ) : (
-                <Editor
-                  key={path}
-                  id={routeId}
-                  roundId={new URLSearchParams(search).get("roundId") || undefined}
-                  openOnLoad={new URLSearchParams(search).get("interview") === "1"}
-                  {...props}
-                />
+                <Editor key={path} id={routeId} {...props} />
               )
             ) : nav === "trainings" ? (
               <Interview key={path} id={routeId} {...props} />
             ) : nav === "report" ? (
               <ReportPage key={path} id={routeId} {...props} />
             ) : nav === "history" ? (
-              <History {...props} />
+              <History projectId={routeId} roundId={historyRoundId} {...props} />
             ) : (
               <Empty
                 title="页面不存在"
