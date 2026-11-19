@@ -6,11 +6,10 @@ test("同账号刷新保留草稿，登录切换和启动身份变化清理前�
     const path = new URL(route.request().url()).pathname;
     let json: unknown;
     if (path === "/api/me") json = user;
-    else if (path === "/api/config") json = { modelMode: "demo", paymentMode: "mock", paymentConfigured: true };
+    else if (path === "/api/config") json = { modelMode: "demo" };
     else if (path === "/api/auth/login") json = user = { id: "synthetic-b", username: "草稿账号B" };
     else if (path === "/api/projects") json = [];
     else if (path === "/api/training-overview") json = { items: [], activeCount: 0, completedCount: 0 };
-    else if (path === "/api/shop") json = { mode: "mock", packages: [], orders: [], quota: { deepAvailable: 0, unlimited: false } };
     else throw Error(path);
     await route.fulfill({ json });
   });
@@ -76,7 +75,7 @@ test("退出登录的迟到响应不会覆盖用户已打开的公开页面", as
   let release: () => void = () => {};
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/config") await route.fulfill({ json: { modelMode: "demo", paymentMode: "mock" } });
+    if (path === "/api/config") await route.fulfill({ json: { modelMode: "demo" } });
     else if (path === "/api/me") await route.fulfill({ json: { id: "synthetic", username: "导航回归" } });
     else if (path === "/api/auth/logout") {
       entered = true;
@@ -89,7 +88,7 @@ test("退出登录的迟到响应不会覆盖用户已打开的公开页面", as
   await expect.poll(() => entered).toBe(true);
   await page.evaluate(() => { location.hash = "/login"; });
   await expect(page).toHaveURL(/#\/login$/);
-  await page.getByRole("link", { name: "隐私与服务说明", exact: true }).click();
+  await page.evaluate(() => { location.hash = "/privacy"; });
   await expect(page.getByRole("heading", { name: "隐私与服务说明", exact: true })).toBeVisible();
   const response = page.waitForResponse("**/api/auth/logout");
   release(); await response;
