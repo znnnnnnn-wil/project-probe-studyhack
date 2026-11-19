@@ -55,11 +55,7 @@ public class WebConfig extends OncePerRequestFilter {
     boolean mutation = !Set.of("GET", "HEAD", "OPTIONS").contains(
       req.getMethod()
     );
-    if (
-      mutation &&
-      !req.getRequestURI().equals("/api/payments/notify") &&
-      !origin.equals(req.getHeader("Origin"))
-    ) {
+    if (mutation && !origin.equals(req.getHeader("Origin"))) {
       res.sendError(403, "来源校验失败");
       return;
     }

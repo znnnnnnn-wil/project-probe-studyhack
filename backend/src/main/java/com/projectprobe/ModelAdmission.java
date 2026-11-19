@@ -16,7 +16,7 @@ final class ModelAdmission {
       try {
         long budget = Math.min(waitMillis, Math.max(0, deadline - now() - 1000));
         if (budget == 0 || !slots.tryAcquire(budget, TimeUnit.MILLISECONDS))
-          throw error(429, "训练等候超时，请稍后重试；恢复不会重复扣次");
+          throw error(429, "训练等候超时，请稍后重试");
         return new Permit(slots);
       } finally { waiting.decrementAndGet(); }
     } catch (InterruptedException e) {
