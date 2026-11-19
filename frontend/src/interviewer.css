@@ -1,26 +1,47 @@
-/* 登录页与五轮训练共用面试官肖像。 */
+/* 登录页与五轮训练共用 3D 面试官；肖像仅作 WebGL 不可用时的兜底。 */
 .avatar-shell {
   position: absolute;
   inset: 0;
   overflow: hidden;
 }
-.avatar-portrait,
-.avatar-motion {
+.avatar-portrait {
   position: absolute;
   inset: 0;
   display: block;
   width: 100%;
   height: 100%;
-}
-.avatar-portrait {
   object-fit: cover;
   object-position: 50% 25%;
+  transition: opacity 0.45s;
 }
-.avatar-motion {
+.avatar-portrait.is-hidden {
   opacity: 0;
 }
-.avatar-motion.is-ready {
+.avatar-mount {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.45s;
+}
+.avatar-mount.is-ready {
   opacity: 1;
+}
+.avatar-mount canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.avatar-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 9px;
+  padding: 16px;
+  text-align: center;
+  color: #eaf0ff;
+  font-size: 12px;
 }
 
 .auth-stage,
@@ -34,9 +55,7 @@
 .auth-stage {
   position: relative;
   overflow: hidden;
-  min-height: 520px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  min-height: 480px;
 }
 .auth-stage-brand {
   position: absolute;
@@ -54,17 +73,19 @@
   position: absolute;
   inset: auto 0 0;
   z-index: 1;
-  padding: 22px clamp(15px, 2vw, 30px);
+  padding: clamp(20px, 3.5vw, 48px);
   color: #fff;
   background: linear-gradient(transparent, #162551db);
 }
 .auth-caption h1 {
-  font-size: clamp(20px, 2vw, 26px);
+  margin: 0;
+  font-size: clamp(22px, 2.3vw, 36px);
   line-height: 1.5;
   letter-spacing: -0.5px;
 }
 .auth-caption p {
-  margin-top: 4px;
+  max-width: 52ch;
+  margin: 8px 0 0;
   color: #eaf0ff;
   font-size: 12px;
   line-height: 1.8;
@@ -293,7 +314,7 @@
 @media (max-width: 740px) {
   .auth-stage {
     min-height: 0;
-    height: clamp(210px, 34svh, 300px);
+    height: clamp(210px, 28svh, 280px);
   }
   .auth-caption {
     padding-block: 12px;
