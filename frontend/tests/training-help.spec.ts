@@ -31,7 +31,7 @@ test("其他标签页调整题目后旧回答被拒绝，刷新保留草稿并�
   } finally { await other.close(); }
 });
 
-test("澄清保留草稿和训练次数，不会可以显式提交后继续", async ({ page }) => {
+test("澄清保留草稿，可提交暂时不会后继续下一题", async ({ page }) => {
   const { training } = await trainingFixture(page);
   await page.goto(`/#/trainings/${training.id}`);
   await page.getByLabel("你的回答", { exact: true }).fill("尚未提交的合成草稿");
@@ -49,6 +49,6 @@ test("澄清保留草稿和训练次数，不会可以显式提交后继续", as
   await expect(page.locator(".question-label")).toContainText("02");
   const value = await (await page.request.get(`/api/trainings/${training.id}`)).json();
   expect(value.turns[0].answer).toContain("暂时不会");
-  const shop = await (await page.request.get("/api/shop")).json();
-  expect(shop.quota.sharedRemaining).toBe(9);
+  expect(value.turns[0].id).toBe(training.turns[0].id);
+  expect(value.turns).toHaveLength(2);
 });

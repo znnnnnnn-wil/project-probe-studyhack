@@ -21,13 +21,11 @@ test("训练记录分页、服务端筛选与展开后读取原问答", async ({
     const url = new URL(route.request().url());
     let json: unknown;
     if (url.pathname === "/api/config")
-      json = {
-        modelMode: "demo",
-        paymentMode: "mock",
-        paymentConfigured: false,
-      };
+      json = { modelMode: "demo" };
     else if (url.pathname === "/api/me")
       json = { id: "synthetic", username: "分页回归" };
+    else if (url.pathname === "/api/practice-history")
+      json = [];
     else if (url.pathname === "/api/training-projects")
       json = [
         { key: "key-a", name: "项目甲" },
@@ -109,8 +107,6 @@ for (const width of [1440, 390]) {
       });
     };
     const p = await project("多轮合成预约项目");
-    const order = await post("/orders", { requestKey: crypto.randomUUID() });
-    await post("/orders/" + order.id + "/mock-pay");
     const first = await post("/trainings", {
       projectId: p.id,
       requestKey: crypto.randomUUID(),

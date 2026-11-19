@@ -17,7 +17,7 @@ export function TrainingHelp({ training, run, busy, onUpdated, onUnknown }: Acti
       kind: action, detail, requestKey: crypto.randomUUID(),
     });
     onUpdated(result); setDetail("");
-    setNotice(action === "FEEDBACK" ? "问题反馈已保存。" : "题目已调整，已有草稿保留，请核对后再提交；不额外扣次数。");
+    setNotice(action === "FEEDBACK" ? "问题反馈已保存。" : "题目已调整，已有草稿保留，请核对后再提交。");
   });
   return <details className="panel"><summary>暂时不会、澄清题意或反馈问题</summary>
     <div className="action-row">
