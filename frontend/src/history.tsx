@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ChevronRight, FolderOpen, MessageSquare, RefreshCw } from "lucide-react";
 import { go } from "./api";
 import type { Training, TrainingSummary, ListPage } from "./types";
@@ -248,11 +248,34 @@ function LegacyHistory({ busy, collapsed, showEmpty }: {
 }
 
 type HistoryProps = Actions & { projectId?: string; roundId?: string };
+const practicePageSize = 20;
 
 export function History({ busy, run, projectId, roundId }: HistoryProps) {
   const practice = useApiResource<PracticeRecord[]>("/practice-history");
   const projects = groupByProject(practice.data ?? []);
   const rounds = projectId ? projects.get(projectId) : undefined;
+  const [pagination, setPagination] = useState({ projectId, page: 0 });
+  const total = projectId ? rounds?.length ?? 0 : projects.size;
+  // 切换项目立即归零；数据刷新后也不渲染越界页。
+  const page = Math.min(
+    pagination.projectId === projectId ? pagination.page : 0,
+    Math.max(0, Math.ceil(total / practicePageSize) - 1),
+  );
+  useEffect(() => {
+    setPagination({ projectId, page });
+  }, [projectId, page]);
+  const offset = page * practicePageSize;
+  const paginationControls = (
+    <div className="action-row" role="group" aria-label={projectId ? "面试场次分页" : "项目训练分页"}>
+      <Button secondary disabled={page === 0} onClick={() => setPagination({ projectId, page: page - 1 })}>
+        上一页
+      </Button>
+      <span>第 {page + 1} 页 · 共 {total} 条</span>
+      <Button secondary disabled={offset + practicePageSize >= total} onClick={() => setPagination({ projectId, page: page + 1 })}>
+        下一页
+      </Button>
+    </div>
+  );
   const record = rounds?.find(round => round.roundId === roundId);
   const projectHistoryPath = projectId ? `#/history/${encodeURIComponent(projectId)}` : "#/history";
   const retry = practice.error && (
@@ -291,10 +314,11 @@ export function History({ busy, run, projectId, roundId }: HistoryProps) {
         </div>
         {retry || (practice.loading ? <Loading /> : rounds ? (
           <section className="panel practice-history-rounds" aria-label="面试记录">
-            {rounds.map((round, index) => (
-              <PracticeRound key={round.roundId} record={round} current={index === 0}
+            {rounds.slice(offset, offset + practicePageSize).map((round) => (
+              <PracticeRound key={round.roundId} record={round} current={round.roundId === rounds[0].roundId}
                 archivePath={`${projectHistoryPath}/${encodeURIComponent(round.roundId)}`} />
             ))}
+            {paginationControls}
           </section>
         ) : <Empty title="没有找到这个项目的训练记录" text="返回训练记录查看其他项目。" />)}
       </section>
@@ -312,7 +336,7 @@ export function History({ busy, run, projectId, roundId }: HistoryProps) {
       {practice.loading && <Loading />}
       {projects.size > 0 && (
         <section className="panel practice-history-projects" aria-label="项目训练">
-          {Array.from(projects, ([id, trainings]) => (
+          {Array.from(projects).slice(offset, offset + practicePageSize).map(([id, trainings]) => (
             <a className="practice-history-project" key={id} href={`#/history/${encodeURIComponent(id)}`}>
               <div className="card-icon"><FolderOpen aria-hidden="true" /></div>
               <div>
@@ -322,6 +346,7 @@ export function History({ busy, run, projectId, roundId }: HistoryProps) {
               <ChevronRight size={18} aria-hidden="true" />
             </a>
           ))}
+          {paginationControls}
         </section>
       )}
       {!practice.loading && <LegacyHistory busy={busy} collapsed={projects.size > 0} showEmpty={practice.data?.length === 0} />}
