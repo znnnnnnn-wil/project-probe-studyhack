@@ -79,10 +79,16 @@ test("示例面试只使用免提语音，暂停和切题后可恢复", async ({
 
   await page.goto("/#/experience");
   await page.getByRole("button", { name: "开始五轮练习" }).click();
-  await expect(page.getByRole("button", { name: "开始语音输入" })).toHaveCount(0);
-  await page.getByRole("button", { name: "同意并进入语音面试" }).click();
-
   const room = page.getByRole("dialog", { name: "示例面试室" });
+  await expect(room).toBeVisible();
+  await expect(room.getByRole("textbox", { name: "本轮回答" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始语音输入" })).toHaveCount(0);
+  await endPlayback();
+  await expect(room.getByRole("button", { name: "重新播报本题" })).toBeEnabled();
+  expect(await micState()).toBeNull();
+  await expect(room.getByRole("button", { name: "同意并开始语音面试" })).toBeVisible();
+  await room.getByRole("button", { name: "同意并开始语音面试" }).click();
+
   const ready = room.getByText("麦克风已开启，可以直接说话");
   const turnTaking = room.getByText("轮到你时，麦克风会自动恢复");
   const pause = room.getByRole("button", { name: "暂停语音面试" });
