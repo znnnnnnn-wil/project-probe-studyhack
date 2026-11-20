@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { mockPracticeVoice } from "../tests/practice-voice-fixture";
 
 test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", async ({ page }) => {
   const errors: string[] = [];
@@ -54,7 +55,9 @@ test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", as
   expect(errors).toEqual([]);
 });
 
-test("自己的项目免费练五轮，刷新后题目与草稿对应", async ({ page }) => {
+test("项目语音面试刷新后可续训，完成后可回看档案", async ({ page }) => {
+  let answer = "";
+  const voice = await mockPracticeVoice(page, () => answer);
   await page.goto("/#/login");
   await page
     .getByLabel("用户名", { exact: true })
@@ -67,45 +70,47 @@ test("自己的项目免费练五轮，刷新后题目与草稿对应", async ({
   await page.goto("/#/projects/new");
   await page.getByLabel("项目名称", { exact: true }).fill("我的合成训练项目");
   await page
-    .getByLabel("个人职责（必填）", { exact: true })
+    .getByLabel("项目经历", { exact: true })
     .fill("我负责预约接口和数据库唯一约束，前端由同学负责。");
   await page.getByRole("button", { name: "保存项目材料", exact: true }).click();
-  const trial = page.getByRole("region", { name: "我的项目五轮训练" });
-  await trial.getByRole("button", { name: "进入面试室" }).click();
+  await page.getByRole("button", { name: "返回项目列表" }).click();
+  await page.getByRole("link", { name: "进入面试室" }).click();
   const room = page.getByRole("dialog", { name: "项目面试室" });
-  await room.getByRole("button", { name: "开始五轮训练" }).click();
-  const answer = page.getByLabel("我的回答", { exact: true });
+  await room.getByRole("button", { name: "同意并开始语音面试" }).click();
+  const project = new URL(page.url()).hash.split("/").pop()!.split("?")[0];
   for (let i = 0; i < 5; i++) {
-    await expect(answer).toBeEnabled();
-    await answer.fill(
-      `第${i + 1}题：我负责预约接口，通过唯一约束避免重复，尚未验证并发。`,
-    );
+    const progress = room.getByText(`第 ${i + 1} / 5 题`, { exact: true });
+    await expect(progress).toBeVisible();
     if (i === 1) {
-      page.once("dialog", (dialog) => dialog.accept());
       await page.reload();
-      await expect(answer).toHaveValue(/第2题/);
+      await expect(progress).toBeVisible();
+      await room.getByRole("button", { name: "同意并进入语音面试" }).click();
     }
-    await page.getByRole("button", { name: "提交回答", exact: true }).click();
-    if (i < 4) await expect(answer).toHaveValue("");
+    answer = `第${i + 1}题：我负责预约接口，通过数据库唯一约束避免重复写入，尚未验证并发。`;
+    await voice.speak();
   }
-  await expect(
-    trial.getByRole("heading", { name: "针对你的回答" }),
-  ).toBeVisible();
+  const archive = page.getByRole("region", { name: "面试详情" });
+  await expect(archive.getByRole("region", { name: "本场评分" })).toContainText("未评分");
+  await expect(page.locator("#project-materials")).toHaveCount(0);
   const exportEvent = page.waitForEvent("download");
-  await trial.getByRole("button", { name: "导出本轮复盘" }).click();
+  await archive.getByRole("button", { name: "导出本轮复盘" }).click();
   const exported = await exportEvent;
   expect(await readFile((await exported.path())!, "utf8")).toContain("第5题");
-  const project = page.url().split("/").pop();
   const state = await (
     await page.request.get(`/api/projects/${project}/practice`)
   ).json();
+  await expect(page).toHaveURL(new URL(`/#/history/${project}/${state.roundId}`, page.url()).href);
   expect(state.status).toBe("COMPLETED");
   expect(state.turns).toHaveLength(5);
   for (let i = 0; i < 5; i++)
     expect(state.turns[i].answer).toContain(`第${i + 1}题`);
-  const retest = page.getByRole("region", { name: "专项复测" });
-  const select = retest.getByLabel("选择复测反馈");
-  if (await select.isVisible()) await select.selectOption("1");
+  const retest = archive.getByRole("region", { name: "专项复测" });
+  const feedbackChoices = retest.getByRole("radio");
+  if (await feedbackChoices.count() > 1) {
+    await feedbackChoices.first().focus();
+    await feedbackChoices.first().press("ArrowRight");
+    await expect(feedbackChoices.nth(1)).toBeChecked();
+  }
   const revised = "测试输入：两次并发预约。预期结果：只有一笔有效预约。";
   await retest.getByLabel("补答").fill(revised);
   await retest.getByRole("button", { name: "提交补答并对照" }).click();
@@ -114,12 +119,14 @@ test("自己的项目免费练五轮，刷新后题目与草稿对应", async ({
   await expect(retest.getByText(revised, { exact: true })).toBeVisible();
 
   await page.goto("/#/history");
-  const record = page.getByRole("region", { name: "项目练习" });
-  await expect(record.getByText(/专项复测已完成/)).toBeVisible();
-  await record.getByRole("link", { name: /我的合成训练项目/ }).click();
-  await expect(retest.getByText("前后对照", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: /我的合成训练项目/ }).click();
+  await expect(page.getByText("专项复测已完成", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "查看报告与对话" }).click();
+  await expect(archive.getByRole("region", { name: "本场评分" })).toContainText("未评分");
+  await expect(archive.getByRole("region", { name: "完整对话" })).toContainText("第5题：我负责预约接口");
+  await expect(archive.getByRole("region", { name: "专项复测" }).getByText(revised, { exact: true })).toBeVisible();
   const finalExport = page.waitForEvent("download");
-  await trial.getByRole("button", { name: "导出本轮复盘" }).click();
+  await archive.getByRole("button", { name: "导出本轮复盘" }).click();
   const finalContent = await readFile((await (await finalExport).path())!, "utf8");
   expect(finalContent).toContain("## 专项复测");
   expect(finalContent).toContain(revised);
