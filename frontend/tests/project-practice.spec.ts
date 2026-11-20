@@ -93,6 +93,71 @@ test("面试完成后进入本场报告，项目材料单独编辑，复练后�
   await expect(room.getByRole("heading", { name: /请介绍/ })).toBeVisible();
 });
 
+test("取消面试后重新进入是新轮次，暂停返回仍保留进度，取消失败可重试", async ({ page }) => {
+  const voice = await mockPracticeVoice(page, () => "你好");
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const origin = new URL(test.info().project.use.baseURL!).origin;
+  const post = async (path: string, data: unknown) => {
+    const response = await page.request.post("/api" + path, { headers: { Origin: origin }, data });
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  await post("/auth/register", { username: "cancel-practice-" + crypto.randomUUID(), password: "synthetic-practice-password" });
+  const project = await post("/projects", { name: "取消后重开的项目" });
+  const path = `/projects/${project.id}/practice`;
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  await page.goto(`/#/projects/${project.id}?interview=1`);
+  await room.getByRole("button", { name: "同意并开始语音面试", exact: true }).click();
+  await voice.speak();
+  await expect(room.getByRole("region", { name: "本题对话" })).toContainText("你好");
+  const first = await (await page.request.get("/api" + path)).json();
+  await room.getByRole("button", { name: "暂停语音面试", exact: true }).click();
+  await expect(room.getByText("麦克风已暂停", { exact: true })).toBeVisible();
+  await room.getByRole("button", { name: "继续语音面试", exact: true }).click();
+  await room.getByRole("button", { name: "返回项目列表", exact: true }).click();
+  await page.getByRole("link", { name: "进入面试室", exact: true }).click();
+  await expect(room.getByRole("region", { name: "本题对话" })).toContainText("你好");
+  expect((await (await page.request.get("/api" + path)).json()).roundId).toBe(first.roundId);
+  await room.getByRole("button", { name: "同意并进入语音面试", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(({ projectId, turnId }) => {
+    sessionStorage.setItem("practice-draft:" + projectId, "待取消的草稿");
+    sessionStorage.setItem("practice-draft-turn:" + projectId, turnId);
+    sessionStorage.setItem("practice-draft-exchange:" + projectId, "1");
+  }, { projectId: project.id, turnId: first.turns[0].id });
+  await page.route("**/api" + path + "/cancel", route => route.fulfill({
+    status: 503, json: { message: "取消暂时失败，请重试" },
+  }), { times: 1 });
+  await room.getByRole("button", { name: "取消语音面试", exact: true }).click();
+  await expect(room.getByRole("alert")).toContainText("取消暂时失败，请重试");
+  await expect(room.getByRole("button", { name: "继续语音面试", exact: true })).toBeEnabled();
+  expect((await (await page.request.get("/api" + path)).json()).roundId).toBe(first.roundId);
+  expect(await page.evaluate(id => sessionStorage.getItem("practice-draft:" + id), project.id)).toBe("待取消的草稿");
+
+  await room.getByRole("button", { name: "取消语音面试", exact: true }).click();
+  await expect(page).toHaveURL(/#\/projects$/);
+  expect((await (await page.request.get("/api" + path)).json()).status).toBe("AVAILABLE");
+  expect(await page.evaluate(id => ["practice-draft:", "practice-draft-turn:", "practice-draft-exchange:"]
+    .map(key => sessionStorage.getItem(key + id)), project.id)).toEqual([null, null, null]);
+  expect(await (await page.request.get("/api/practice-history")).json()).toEqual([]);
+  await page.getByRole("link", { name: "进入面试室", exact: true }).click();
+  await page.reload();
+  await expect(room.getByRole("heading", { name: "开始项目面试", exact: true })).toBeVisible();
+  await expect(room.getByRole("region", { name: "本题对话" })).toHaveCount(0);
+  await expect(room.getByRole("region", { name: "未发送的回答" })).toHaveCount(0);
+  await room.getByRole("button", { name: "同意并开始语音面试", exact: true }).click();
+  await expect(room.getByRole("heading", { name: /请介绍/ })).toBeVisible();
+  const next = await (await page.request.get("/api" + path)).json();
+  expect(next.roundId).not.toBe(first.roundId);
+  expect(next.roundNumber).toBe(first.roundNumber + 1);
+  expect(next.turns).toHaveLength(1);
+  expect(next.turns[0].id).not.toBe(first.turns[0].id);
+  expect(next.turns[0].answer).toBe("");
+  expect(next.turns[0].exchanges ?? []).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test("练习草稿刷新与返回后保留，读取失败可重试", async ({ page }) => {
   const origin = new URL(test.info().project.use.baseURL!).origin;
   const post = async (path: string, data: unknown) => {
@@ -138,6 +203,81 @@ test("练习草稿刷新与返回后保留，读取失败可重试", async ({ pa
   await practice.getByRole("button", { name: "重新读取训练状态" }).click();
   await expect(savedAnswer).toBeVisible();
   expect(writes).toBe(0);
+});
+
+for (const leaveRoom of [false, true]) test(`取消期间迟到响应不影响${leaveRoom ? "重新进入的新面试与草稿" : "当前页面"}`, async ({ page }) => {
+  const id = "66666666-6666-4666-8666-666666666666";
+  const path = `/api/projects/${id}/practice`;
+  const active = { status: "ACTIVE", roundId: "cancel-in-flight", maxTurns: 1,
+    turns: [{ id: "turn", question: "请说明职责。", answer: "" }] };
+  const responses: Record<string, unknown> = {
+    "/api/config": { modelMode: "demo", speechEnabled: true },
+    "/api/me": { id: "synthetic", username: "取消测试" },
+    ["/api/projects/" + id]: { id, name: "取消中的面试" },
+    "/api/projects": [],
+    "/api/training-overview": { items: [] },
+    [path]: active,
+    [path + "/transcribe"]: { text: "这是一段等待处理的回答" },
+  };
+  let releaseAnswer!: () => void, releaseCancel!: () => void;
+  const answerGate = new Promise<void>(resolve => { releaseAnswer = resolve; });
+  const cancelGate = new Promise<void>(resolve => { releaseCancel = resolve; });
+  let submissions = 0, cancellations = 0;
+  await page.route("**/api/**", async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === path && request.method() === "POST") {
+      submissions++;
+      await answerGate;
+      return route.fulfill({ json: { ...active, status: "COMPLETED", report: { mode: "demo" } } });
+    }
+    if (pathname === path + "/cancel") {
+      cancellations++;
+      expect(request.postDataJSON()).toEqual({ roundId: active.roundId });
+      await cancelGate;
+      return route.fulfill({ json: { status: "AVAILABLE", maxTurns: 1 } });
+    }
+    return route.fulfill({ json: responses[pathname] ?? null });
+  });
+  const voice = await mockHandsFree(page);
+  await page.goto(`/#/projects/${id}?interview=1`);
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  await room.getByRole("button", { name: "同意并进入语音面试", exact: true }).click();
+  await expect.poll(voice.micState).toEqual(["live", true]);
+  await voice.beginSpeech();
+  await voice.endSpeech();
+  await expect.poll(() => submissions).toBe(1);
+  await room.getByRole("button", { name: "取消语音面试", exact: true }).click();
+  await expect(room.getByRole("button", { name: "正在取消…", exact: true })).toBeDisabled();
+  await expect.poll(voice.micState).toEqual(["ended", false]);
+  const answerFinished = page.waitForEvent("requestfinished", request => new URL(request.url()).pathname === path && request.method() === "POST");
+  releaseAnswer();
+  await answerFinished;
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(room.getByRole("button", { name: "正在取消…", exact: true })).toBeDisabled();
+  expect(cancellations).toBe(1);
+  if (leaveRoom) {
+    await room.getByRole("button", { name: "返回项目列表", exact: true }).click();
+    await expect(room).toHaveCount(0);
+    responses[path] = { ...active, roundId: "new-round", turns: [{ id: "new-turn", question: "新一场的题目", answer: "" }] };
+    await page.evaluate(projectId => {
+      sessionStorage.setItem("practice-draft:" + projectId, "新一场的草稿");
+      sessionStorage.setItem("practice-draft-turn:" + projectId, "new-turn");
+      sessionStorage.setItem("practice-draft-exchange:" + projectId, "0");
+      location.hash = `/projects/${projectId}?interview=1`;
+    }, id);
+    await expect(room.getByRole("heading", { name: "新一场的题目", exact: true })).toBeVisible();
+    const cancelFinished = page.waitForEvent("requestfinished", request => new URL(request.url()).pathname === path + "/cancel");
+    releaseCancel();
+    await cancelFinished;
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(room.getByText("新一场的草稿", { exact: true })).toBeVisible();
+    expect(await page.evaluate(projectId => sessionStorage.getItem("practice-draft:" + projectId), id)).toBe("新一场的草稿");
+  } else {
+    releaseCancel();
+    await expect(page).toHaveURL(/#\/projects$/);
+    await expect(room).toHaveCount(0);
+  }
 });
 
 test("刷新遇到正在生成只轮询读取，不重复提交", async ({ page }) => {
@@ -292,6 +432,11 @@ test("免提面试播报时可开口打断，问候留在同一题", async ({ pa
       expect(form).toContain("RIFF");
       return route.fulfill({ json: { text: sentences[uploads++] } });
     }
+    if (pathname === path + "/cancel") {
+      expect(request.method()).toBe("POST");
+      expect(request.postDataJSON()).toEqual({ roundId: response.roundId });
+      return route.fulfill({ json: { status: "AVAILABLE", maxTurns: 5 } });
+    }
     if (pathname !== path) return route.fulfill({ json: responses[pathname] ?? null });
     if (request.method() === "GET") return route.fulfill({ json: response });
     expect(request.postDataJSON()).toEqual({
@@ -344,4 +489,9 @@ test("免提面试播报时可开口打断，问候留在同一题", async ({ pa
   await expect(room.getByText("第 2 / 5 题")).toBeVisible();
   await expect(room.getByRole("heading", { name: "如何处理缓存失效？" })).toBeVisible();
   expect([uploads, submissions]).toEqual([2, 2]);
+  await room.getByRole("button", { name: "取消语音面试", exact: true }).click();
+  await expect(page).toHaveURL(/#\/projects$/);
+  await expect(page.getByRole("heading", { name: "我的项目", exact: true })).toBeVisible();
+  await expect(page.locator("#project-materials, #project-practice, dialog.practice-room")).toHaveCount(0);
+  await expect.poll(voice.micState).toEqual(["ended", false]);
 });

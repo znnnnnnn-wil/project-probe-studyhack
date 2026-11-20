@@ -28,6 +28,8 @@ export function useProjectPractice(projectId: string, roundId?: string) {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const cancelRequest = useRef(false);
   const [notice, setNotice] = useState("");
   const mounted = useRef(false);
   const sequence = useRef(0);
@@ -63,7 +65,7 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     const roundChanged = !!acceptedRound.current && acceptedRound.current !== next.roundId;
     acceptedTurn.current = turn?.id || "";
     acceptedRound.current = next.roundId || "";
-    if (next.report || roundChanged) {
+    if (next.report || roundChanged || next.status === "AVAILABLE") {
       clearDraft();
       setNotice("");
     } else if (submitted) {
@@ -87,7 +89,7 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     if (mounted.current && (!currentRound || next.roundId === currentRound)) accept(next);
   }, [accept, roundId]);
   const load = useCallback(async () => {
-    if (working.current || reading.current) return;
+    if (working.current || reading.current || cancelRequest.current) return;
     reading.current = true;
     const version = ++sequence.current;
     try {
@@ -131,8 +133,28 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     }
     setNotice("未发送的回答已保存在当前标签页。");
   };
+  const cancel = async () => {
+    if (roundId || !value.roundId || value.report || cancelRequest.current) return false;
+    cancelRequest.current = true;
+    const version = ++sequence.current;
+    const isCurrent = () => mounted.current && version === sequence.current;
+    setCancelling(true); setError("");
+    try {
+      await api<Practice>(endpoint + "/cancel", "POST", { roundId: value.roundId });
+      if (!isCurrent()) return false;
+      clearDraft();
+      setNotice("");
+      return true;
+    } catch (e) {
+      if (isCurrent()) setError(e instanceof Error ? e.message : "取消面试失败，请重试");
+      return false;
+    } finally {
+      cancelRequest.current = false;
+      if (mounted.current) setCancelling(false);
+    }
+  };
   const submit = async (utterance?: string, restart = false, topic = "") => {
-    if (roundId || working.current || loadError || ["LOADING", "GENERATING"].includes(value.status)) return;
+    if (roundId || working.current || cancelRequest.current || loadError || ["LOADING", "GENERATING"].includes(value.status)) return;
     if (restart && !value.roundId) return;
     const turn = value.turns?.at(-1);
     const text = (utterance ?? current.current).trim();
@@ -141,20 +163,22 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     const message = restart ? { ...topicInput, restart: true, roundId: value.roundId } : !submitted && !value.pendingExchange && turn && text
       ? { answer: text, turnId: turn.id, dialogue: true, exchangeCount: turn.exchanges?.length ?? 0 }
       : !value.roundId && !turn ? topicInput : {};
-    working.current = true; ++sequence.current; setPending(true); setError("");
+    const version = ++sequence.current;
+    const isCurrent = () => mounted.current && version === sequence.current;
+    working.current = true; setPending(true); setError("");
     // Keep transcribed text retriable if the reply request fails before it reaches the server.
     if (utterance && "answer" in message && !current.current.trim()) edit(text);
     try {
       const next = await api<Practice>(endpoint, "POST", message);
-            if (mounted.current) accept(next);
+      if (isCurrent()) accept(next);
     } catch (e) {
-      if (!mounted.current) return;
+      if (!isCurrent()) return;
       if (e instanceof ApiError && e.status === 409) {
         try {
           const next = await api<Practice>(readEndpoint);
-          if (mounted.current) accept(next);
+          if (isCurrent()) accept(next);
         } catch {
-          if (mounted.current) {
+          if (isCurrent()) {
             setLoadError(true);
             setError("状态已变化，暂未读到最新进度，请重新读取。");
           }
@@ -163,7 +187,7 @@ export function useProjectPractice(projectId: string, roundId?: string) {
         const message = e instanceof Error ? e.message : "训练请求失败";
         if (e instanceof ApiError && e.status === 503) {
           const state = await api<Practice>(readEndpoint).catch(() => null);
-          if (!mounted.current) return;
+          if (!isCurrent()) return;
           if (state?.status === "FAILED") {
             accept(state);
             setError(message);
@@ -175,5 +199,5 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       }
     } finally { working.current = false; if (mounted.current) setPending(false); }
   };
-  return { value, answer, edit, discardDraft, error, loadError, pending, notice, submitted, load, submit, acceptRetest };
+  return { value, answer, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel, acceptRetest };
 }

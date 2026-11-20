@@ -17,6 +17,9 @@ type PracticeConversationVoiceProps = VoiceTarget & {
   enabled: boolean;
   suspended: boolean;
   promptPlaying: boolean;
+  cancelling?: boolean;
+  cancelDisabled?: boolean;
+  onCancel: () => void;
   onUtterance: (text: string) => Promise<void> | void;
   onListening?: (listening: boolean) => void;
   onProcessing?: (processing: boolean) => void;
@@ -38,7 +41,7 @@ function sameTarget(left: VoiceTarget, right: VoiceTarget) {
 }
 
 export function PracticeConversationVoice(props: PracticeConversationVoiceProps) {
-  const { projectId, turnId, exchangeCount, enabled, suspended, promptPlaying } = props;
+  const { projectId, turnId, exchangeCount, enabled, suspended, promptPlaying, onCancel } = props;
   const current = useRef(props);
   current.current = props;
   const controls = useRef<{
@@ -327,12 +330,21 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
           <AudioLines size={16} aria-hidden="true" />
           <span role="status">{label}</span>
         </span>
-        <button type="button" className="button secondary" onClick={() => {
-          if (!paused) controls.current?.pause();
-          setPaused(!paused);
-        }}>
-          {paused ? "继续语音面试" : "暂停语音面试"}
-        </button>
+        <div className="practice-voice-session-actions">
+          <button type="button" className="button secondary" disabled={props.cancelling} onClick={() => {
+            if (!paused) controls.current?.pause();
+            setPaused(!paused);
+          }}>
+            {paused ? "继续语音面试" : "暂停语音面试"}
+          </button>
+          <button type="button" className="button secondary" disabled={props.cancelling || props.cancelDisabled} onClick={() => {
+            controls.current?.pause();
+            setPaused(true);
+            onCancel();
+          }}>
+            {props.cancelling ? "正在取消…" : "取消语音面试"}
+          </button>
+        </div>
       </div>
       {!paused && notice && <p className="exp-voice-notice" role="status">{notice}</p>}
       {!paused && failure && (

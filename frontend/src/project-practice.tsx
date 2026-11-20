@@ -32,7 +32,7 @@ export function ProjectInterview({ id, fromHistory, ...props }: Actions & { id: 
 function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: Actions & {
   projectId: string; project: Project; exitLabel: string; onExit: () => void;
 }) {
-  const { value, answer, edit, discardDraft, error, loadError, pending, notice, submitted, load, submit } = useProjectPractice(projectId);
+  const { value, answer, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel } = useProjectPractice(projectId);
   const [topic, setTopic] = useState("");
   const activeRound = useRef<string | undefined>(undefined);
   const [voiceAccepted, setVoiceAccepted] = useState(false);
@@ -57,6 +57,11 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     camera.stop();
     stop();
     onExit();
+  };
+  const cancelInterview = async () => {
+    camera.stop();
+    stop();
+    if (await cancel()) closeRoom();
   };
   const enableVoice = () => {
     unlock();
@@ -101,7 +106,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     }
   }, [promptKey, stop]);
   const voiceReadyForPrompt = voiceReady !== null && voiceReady.turnId === questionId && voiceReady.exchangeCount === exchanges.length;
-  const playbackAllowed = live && handsFree && sound && speechSupported;
+  const playbackAllowed = live && handsFree && sound && speechSupported && !cancelling;
   const needsPlayback = playbackAllowed && voiceReadyForPrompt && !waiting && !loadError && !autoListening && !autoProcessing &&
     value.status === "ACTIVE" && spokenPrompt.current !== promptKey;
   useLayoutEffect(() => {
@@ -276,8 +281,11 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
               turnId={live ? turn?.id ?? "" : ""}
               exchangeCount={exchanges.length}
               enabled
-              suspended={!live || busy || waiting || loadError || submitted || value.status !== "ACTIVE" || hasDraft}
+              suspended={!live || busy || waiting || cancelling || loadError || submitted || value.status !== "ACTIVE" || hasDraft}
               promptPlaying={needsPlayback || preparing || speaking}
+              cancelling={cancelling}
+              cancelDisabled={!value.roundId || !!value.report}
+              onCancel={() => void cancelInterview()}
               onUtterance={sendVoice}
               onListening={handleAutoListening}
               onProcessing={setAutoProcessing}
