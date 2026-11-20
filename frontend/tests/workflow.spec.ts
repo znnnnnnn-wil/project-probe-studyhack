@@ -74,11 +74,10 @@ test("桌面完整闭环：档案、训练、刷新、报告及复测", async ({
   await page.reload();
   await expect(page.locator(".finding")).toHaveCount(5);
   await page.getByRole("button", { name: "补充材料并复测" }).click();
-  await page
-    .getByLabel("验证方式", { exact: true })
-    .fill(
-      "补充合成测试设计：双实例并发预约，检查数据库约束冲突；在响应前断网重试，验证不会重复写入。实际压测数据尚未提供。",
-    );
+  const projectExperience = page.getByRole("textbox", { name: "项目经历", exact: true });
+  await expect(projectExperience).toBeEditable();
+  const originalExperience = await projectExperience.inputValue();
+  await projectExperience.fill(originalExperience + "\n补充合成测试设计：双实例并发预约，检查数据库约束冲突；在响应前断网重试，验证不会重复写入。实际压测数据尚未提供。");
   await page.getByRole("button", { name: "保存项目材料" }).click();
   await page.getByRole("button", { name: "开始关联复测" }).click();
   await expect(page.getByText("问题 01", { exact: true })).toBeVisible();

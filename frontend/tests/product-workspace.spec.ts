@@ -50,13 +50,12 @@ for (const viewport of [
       fullPage: true,
     });
     await page.getByRole("link", { name: "编辑材料", exact: true }).click();
-    await page.getByRole("button", { name: "展开技术栈、实现与验证等补充材料" }).click();
     await page
-      .getByLabel("验证方式", { exact: true })
+      .getByLabel("项目经历")
       .fill("未保存的合成验证笔记");
     page.on("dialog", (dialog) => dialog.accept());
     await page.reload();
-    await expect(page.getByLabel("验证方式", { exact: true })).toHaveValue(
+    await expect(page.getByLabel("项目经历")).toHaveValue(
       "未保存的合成验证笔记",
     );
     await expect(page.getByRole("status")).toContainText(

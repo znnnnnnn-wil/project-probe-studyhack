@@ -169,7 +169,6 @@ public class ProjectService {
       body.put(field, v);
     }
     required(body, "name", 100);
-    required(body, "responsibility", 12000);
     if (s.encode(body).length() > 45000) throw error(
       400,
       "项目总材料请控制在 45000 字以内"
