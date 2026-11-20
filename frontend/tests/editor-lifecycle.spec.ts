@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { demoProject } from "../src/api";
+import { mockHandsFree } from "./practice-voice-fixture";
 
 test("离开项目页后开始训练的迟到响应不会抢回页面", async ({ page }) => {
+  await mockHandsFree(page);
   const projectId = "22222222-2222-4222-8222-222222222222";
   const practicePath = "/api/projects/" + projectId + "/practice";
   let entered = false;
@@ -11,7 +13,7 @@ test("离开项目页后开始训练的迟到响应不会抢回页面", async ({
     const path = new URL(request.url()).pathname;
     let json: unknown;
     if (path === "/api/config")
-      json = { modelMode: "demo" };
+      json = { modelMode: "demo", speechEnabled: true };
     else if (path === "/api/me")
       json = { id: "synthetic", username: "页面生命周期回归" };
     else if (path === "/api/projects/" + projectId)
@@ -33,8 +35,10 @@ test("离开项目页后开始训练的迟到响应不会抢回页面", async ({
         maxTurns: 5,
         turns: [{ id: "turn", question: "请介绍你的实现。", answer: "" }],
       };
-    } else if (path === "/api/trainings" || path === "/api/practice-history") {
+    } else if (path === "/api/projects" || path === "/api/trainings" || path === "/api/practice-history") {
       json = [];
+    } else if (path === "/api/training-overview") {
+      json = { items: [] };
     } else if (path === "/api/training-projects") json = [];
     else if (path === "/api/training-page")
       json = { items: [], total: 0, hasMore: false, offset: 0, limit: 20 };
@@ -42,9 +46,12 @@ test("离开项目页后开始训练的迟到响应不会抢回页面", async ({
     await route.fulfill({ json });
   });
   await page.goto("/#/projects/" + projectId + "?interview=1");
-  await page.getByRole("button", { name: "开始五轮训练", exact: true }).click();
+  await page.getByRole("button", { name: "同意并开始语音面试", exact: true }).click();
   await expect.poll(() => entered).toBe(true);
-  await page.getByRole("button", { name: "返回项目", exact: true }).click();
+  await page.getByRole("button", { name: "返回项目列表", exact: true }).click();
+  await expect(page).toHaveURL(/#\/projects$/);
+  await expect(page.getByRole("heading", { name: "我的项目", exact: true })).toBeVisible();
+  await expect(page.locator("#project-materials, #project-practice, dialog.practice-room")).toHaveCount(0);
   await page.getByRole("link", { name: "训练记录", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "训练记录", exact: true }),

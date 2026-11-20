@@ -12,11 +12,10 @@ import { ResumeImport } from "./resume-import";
 import { Button, Loading, PageHead } from "./ui";
 import type { Actions } from "./ui";
 import { useMounted } from "./use-read-scope";
-import { ProjectPractice } from "./project-practice";
 import "./editor.css";
 import { ProjectFields } from "./project-fields";
 
-export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: string; roundId?: string; openOnLoad?: boolean }) {
+export function Editor({ id, run, busy }: Actions & { id: string }) {
   const mounted = useMounted();
   const [importBusy, setImportBusy] = useState(false);
   busy = busy || importBusy;
@@ -120,22 +119,6 @@ export function Editor({ id, roundId, openOnLoad, run, busy }: Actions & { id: s
           {draftNotice}
         </p>
       )}
-      <ProjectPractice
-        projectId={id}
-        projectName={p.name}
-        roundId={roundId}
-        openOnLoad={openOnLoad}
-        disabled={dirty}
-        run={run}
-        busy={busy}
-        onSaved={project => {
-          setP(project);
-          setDirty(false);
-          sessionStorage.removeItem(draftKey);
-          setDraftNotice("练习补充已保存到项目材料。");
-        }}
-        onEditMaterials={() => document.getElementById("project-materials")?.scrollIntoView({ block: "start" })}
-      />
       <div className="editor-layout">
         <div id="project-materials" className="materials-panel">
           <div className="panel-heading">

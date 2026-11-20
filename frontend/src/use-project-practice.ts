@@ -48,6 +48,10 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     sessionStorage.removeItem(turnKey);
     sessionStorage.removeItem(exchangeKey);
   }, [exchangeKey, key, turnKey]);
+  const discardDraft = () => {
+    clearDraft();
+    setNotice("");
+  };
   const accept = useCallback((next: Practice) => {
     setValue(next); setError(""); setLoadError(false);
     if (roundId) return;
@@ -125,7 +129,7 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       sessionStorage.setItem(turnKey, turn.id);
       sessionStorage.setItem(exchangeKey, String(turn.exchanges?.length ?? 0));
     }
-    setNotice("草稿自动保存在当前标签页，提交后才用于AI反馈。");
+    setNotice("未发送的回答已保存在当前标签页。");
   };
   const submit = async (utterance?: string, restart = false, topic = "") => {
     if (roundId || working.current || loadError || ["LOADING", "GENERATING"].includes(value.status)) return;
@@ -171,5 +175,5 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       }
     } finally { working.current = false; if (mounted.current) setPending(false); }
   };
-  return { value, answer, edit, error, loadError, pending, notice, submitted, load, submit, acceptRetest };
+  return { value, answer, edit, discardDraft, error, loadError, pending, notice, submitted, load, submit, acceptRetest };
 }
