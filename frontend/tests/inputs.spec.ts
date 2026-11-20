@@ -95,8 +95,8 @@ for (const width of [1440, 390]) {
       imported.first().getByLabel("项目名称", { exact: true }),
     ).toHaveValue(candidate.name);
     await expect(
-      imported.first().getByLabel("个人职责（必填）", { exact: true }),
-    ).toHaveValue(candidate.responsibility);
+      imported.first().getByLabel("项目经历"),
+    ).toHaveValue(candidate.resume);
     const secondName = imported.nth(1).getByLabel("项目名称", { exact: true });
     await expect(secondName).toHaveValue("第二个合成项目");
     await secondName.fill("第二个合成项目（已编辑）");

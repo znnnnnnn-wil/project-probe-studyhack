@@ -167,9 +167,9 @@ export function ResumeImport({ disabled, onSelect, onProjects, onBusy }: ResumeI
                   <summary>简历原文</summary>
                   <p>{candidate.resume}</p>
                 </details>
-                {!candidate.responsibility && (
+                {!candidate.background && !candidate.resume && (
                   <small className="action-error">
-                    未注明个人职责，需要补充后再保存
+                    未注明项目简介或经历，建议补充后再保存
                   </small>
                 )}
               </div>
