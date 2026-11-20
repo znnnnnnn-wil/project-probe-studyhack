@@ -27,6 +27,9 @@ const Login = lazy(() =>
 const Editor = lazy(() =>
   import("./editor").then((module) => ({ default: module.Editor })),
 );
+const ProjectInterview = lazy(() =>
+  import("./project-practice").then((module) => ({ default: module.ProjectInterview })),
+);
 const NewProject = lazy(() =>
   import("./new-project").then((module) => ({ default: module.NewProject })),
 );
@@ -241,13 +244,10 @@ function App() {
                 <NewProject {...props} />
               ) : projectRoundId ? (
                 <Loading />
+              ) : projectQuery.get("interview") === "1" ? (
+                <ProjectInterview key={path} id={routeId} fromHistory={projectQuery.get("from") === "history"} {...props} />
               ) : (
-                <Editor
-                  key={path}
-                  id={routeId}
-                  openOnLoad={new URLSearchParams(search).get("interview") === "1"}
-                  {...props}
-                />
+                <Editor key={path} id={routeId} {...props} />
               )
             ) : nav === "trainings" ? (
               <Interview key={path} id={routeId} {...props} />

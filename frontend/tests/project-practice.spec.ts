@@ -309,7 +309,7 @@ test("免提面试播报时可开口打断，问候留在同一题", async ({ pa
   });
 
   const voice = await mockHandsFree(page, true);
-  await page.goto(`/#/projects/${id}`);
+  await page.goto(`/#/projects/${id}?interview=1`);
   const room = page.getByRole("dialog", { name: "项目面试室" });
   const canInterrupt = room.getByText("面试官正在播报，可以直接开口打断", { exact: true });
   const listening = room.getByText("正在听你说话", { exact: true });
