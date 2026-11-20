@@ -110,9 +110,6 @@ function App() {
   const publicHome = path === "/" && !user;
   const publicPage = nav === "experience" || publicHome;
   const projectsActive = nav === "projects" || (!!user && !nav);
-  const modeLabel = config?.modelMode === "live"
-    ? "真实 AI 模式 · 反馈可回溯原文"
-    : "规则演示 · 非 AI 技术评估";
   useEffect(() => {
     if (
       ready &&
@@ -193,9 +190,6 @@ function App() {
         </div>
         </div>
       </header>
-      {!publicPage && (
-        <div className="mode-strip"><span>{modeLabel}</span></div>
-      )}
       {(error || (!publicPage && serviceError)) && (
         <div role="alert" className="error">
           <span>{error || serviceError}</span>
