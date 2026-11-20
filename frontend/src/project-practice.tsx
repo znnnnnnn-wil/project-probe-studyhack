@@ -32,7 +32,7 @@ export function ProjectInterview({ id, fromHistory, ...props }: Actions & { id: 
 function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: Actions & {
   projectId: string; project: Project; exitLabel: string; onExit: () => void;
 }) {
-  const { value, answer, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel } = useProjectPractice(projectId);
+  const { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel } = useProjectPractice(projectId);
   const [topic, setTopic] = useState("");
   const activeRound = useRef<string | undefined>(undefined);
   const [voiceAccepted, setVoiceAccepted] = useState(false);
@@ -304,12 +304,14 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
             <small id="practice-voice-consent">{voiceConsent}</small>
           </div>
         ) : voiceUnavailable)}
-        {hasDraft && !loadError && <section className="practice-draft" aria-label="未发送的回答">
-          <h4>未发送的回答</h4>
+        {hasDraft && !loadError && <section className="practice-draft" aria-label={staleDraft ? "旧追问的回答草稿" : "未发送的回答"}>
+          <h4>{staleDraft ? "旧追问的回答草稿" : "未发送的回答"}</h4>
           <p>{answer}</p>
-          {answer.length > 3000 && <small>这段回答太长，可以重新录制，再分段回答。</small>}
+          {staleDraft ? (
+            <small>追问进度已变化。可以复制这段草稿，放弃后继续回答当前追问。</small>
+          ) : answer.length > 3000 && <small>这段回答太长，可以重新录制，再分段回答。</small>}
           <div className="action-row">
-            {action}
+            {!staleDraft && action}
             <Button secondary disabled={busy || waiting || autoProcessing} onClick={discardDraft}>放弃这段回答</Button>
           </div>
         </section>}
