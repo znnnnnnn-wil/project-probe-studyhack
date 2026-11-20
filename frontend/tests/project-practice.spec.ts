@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { mockHandsFree, type TestVoiceWindow } from "./practice-voice-fixture";
 
 test("保存项目即可训练，复练后仍能回看旧复盘", async ({ page }) => {
   await page.goto("/#/login");
@@ -267,7 +268,7 @@ test("五轮练习仅在确认发送时上传录音，失败后可重试并追�
   }
 });
 
-test("同意语音面试后自动接话，问候留在同一题", async ({ page }) => {
+test("免提面试播报时可开口打断，问候留在同一题", async ({ page }) => {
   const id = "55555555-5555-4555-8555-555555555555";
   const path = "/api/projects/" + id + "/practice";
   const responses: Record<string, unknown> = {
@@ -275,13 +276,16 @@ test("同意语音面试后自动接话，问候留在同一题", async ({ page 
     "/api/me": { id: "synthetic", username: "合成用户" },
     ["/api/projects/" + id]: { id, version: 1, name: "预约系统", responsibility: "预约接口", resume: "", facts: [] },
     "/api/trainings": [],
+    "/api/projects": [],
+    "/api/training-overview": { items: [] },
   };
   const initialTurn = { id: "first", question: "如何避免重复预约？", answer: "" };
-  const response = { status: "ACTIVE", maxTurns: 5, turns: [initialTurn] };
+  const response = { status: "ACTIVE", roundId: "voice-round", maxTurns: 5, turns: [initialTurn] };
+  const followUp = "你好，我们继续说说重复预约。";
   const sufficient = "我们在数据库设置请求标识的唯一约束，重复请求读取原结果，并验证两次同时提交只产生一条记录。";
   const sentences = ["你好", sufficient];
   const replies = [
-    { ...response, turns: [{ ...initialTurn, exchanges: [{ answer: "你好", reply: "你好，我们继续说说重复预约。" }] }] },
+    { ...response, turns: [{ ...initialTurn, exchanges: [{ answer: "你好", reply: followUp }] }] },
     { ...response, turns: [{ ...initialTurn, answer: sufficient }, { id: "second", question: "如何处理缓存失效？", answer: "" }] },
   ];
   let uploads = 0;
@@ -304,72 +308,48 @@ test("同意语音面试后自动接话，问候留在同一题", async ({ page 
     return route.fulfill({ json: replies[submissions++] });
   });
 
-  await page.route(/\/src\/voice-activity\.ts(?:\?|$)/, route => route.fulfill({
-    contentType: "text/javascript",
-    body: [
-      "export class VoiceActivity {",
-      "  static async create(_rate, begin, end) {",
-      "    let armed = false;",
-      "    window.testSpeak = () => { if (armed) { begin(); end(new Float32Array(16000)); } };",
-      "    return { feed() {}, pause() { armed = false }, async resume() { armed = true }, async destroy() { armed = false } };",
-      "  }",
-      "}",
-    ].join("\n"),
-  }));
-  await page.addInitScript(() => {
-    const state = window as unknown as {
-      testMic?: MediaStreamTrack;
-      testPlayback?: SpeechSynthesisUtterance;
-    };
-    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
-      value: async () => {
-        const stream = new AudioContext().createMediaStreamDestination().stream;
-        state.testMic = stream.getAudioTracks()[0];
-        return stream;
-      },
-    });
-    Object.defineProperties(speechSynthesis, {
-      speak: { value: (utterance: SpeechSynthesisUtterance) => {
-        state.testPlayback = utterance;
-        queueMicrotask(() => utterance.onstart?.(new Event("start") as SpeechSynthesisEvent));
-      } },
-      cancel: { value: () => { state.testPlayback = undefined; } },
-    });
-  });
-
-  await page.goto("/#/projects/" + id);
-  const micState = () => page.evaluate(() => {
-    const mic = (window as unknown as { testMic?: MediaStreamTrack }).testMic;
-    return mic ? [mic.readyState, mic.enabled] : null;
-  });
-  const endPlayback = () => page.evaluate(() => {
-    const state = window as unknown as { testPlayback: SpeechSynthesisUtterance };
-    state.testPlayback.onend?.(new Event("end") as SpeechSynthesisEvent);
-  });
-  const saySomething = () => page.evaluate(() => {
-    (window as unknown as { testSpeak: () => void }).testSpeak();
-  });
+  const voice = await mockHandsFree(page, true);
+  await page.goto(`/#/projects/${id}`);
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const canInterrupt = room.getByText("面试官正在播报，可以直接开口打断", { exact: true });
+  const listening = room.getByText("正在听你说话", { exact: true });
   const start = page.getByRole("button", { name: "同意并进入语音面试" });
   await expect(start).toHaveAccessibleDescription(/自动发往阿里云百炼/);
-  expect(await micState()).toBeNull();
+  expect(await voice.micRequested()).toBe(false);
+  expect(await voice.broadcasts()).toEqual([]);
   await start.click();
-  const room = page.getByRole("dialog", { name: "项目面试室" });
-  await expect(room.getByText("轮到你时，麦克风会自动恢复")).toBeVisible();
-  await expect.poll(micState).toEqual(["live", false]);
-  expect(uploads).toBe(0);
-  await endPlayback();
-  await expect(room.getByText("麦克风已开启，可以直接说话")).toBeVisible();
-  await saySomething();
-  await expect(room.getByText("你好，我们继续说说重复预约。")).toBeVisible();
+  await expect.poll(voice.micRequested).toBe(true);
+  await expect(room.getByText("正在准备麦克风", { exact: true })).toBeVisible();
+  expect(await voice.broadcasts()).toEqual([]);
+  expect(await voice.micState()).toBeNull();
+  await voice.grantMic();
+  await expect(canInterrupt).toBeVisible();
+  await expect.poll(voice.playback).toEqual({ playing: initialTurn.question, interrupted: [] });
+  expect(await voice.broadcasts()).toEqual([{ text: initialTurn.question, micReady: true }]);
+  await expect.poll(voice.micState).toEqual(["live", true]);
+  await voice.beginSpeech();
+  await expect(listening).toBeVisible();
+  await expect.poll(voice.playback).toEqual({ playing: null, interrupted: [initialTurn.question] });
+  expect([uploads, submissions]).toEqual([0, 0]);
+  await voice.endSpeech();
+  await expect(room.getByText(followUp)).toBeVisible();
   await expect(room.getByText("第 1 / 5 题")).toBeVisible();
-  await expect.poll(micState).toEqual(["live", false]);
-  await endPlayback();
-  await expect(room.getByText("麦克风已开启，可以直接说话")).toBeVisible();
-  await saySomething();
+  await expect(canInterrupt).toBeVisible();
+  await expect.poll(voice.playback).toEqual({ playing: followUp, interrupted: [initialTurn.question] });
+  await expect.poll(voice.micState).toEqual(["live", true]);
+
+  await page.evaluate(async () => {
+    // A cancelled browser utterance may report completion after the next one starts.
+    (window as TestVoiceWindow).testInterrupted[0].onend?.(new Event("end") as SpeechSynthesisEvent);
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+  await expect(canInterrupt).toBeVisible();
+  await voice.beginSpeech();
+  await expect(listening).toBeVisible();
+  await expect.poll(voice.playback).toEqual({ playing: null, interrupted: [initialTurn.question, followUp] });
+  expect([uploads, submissions]).toEqual([1, 1]);
+  await voice.endSpeech();
   await expect(room.getByText("第 2 / 5 题")).toBeVisible();
   await expect(room.getByRole("heading", { name: "如何处理缓存失效？" })).toBeVisible();
   expect([uploads, submissions]).toEqual([2, 2]);
-  await room.getByRole("button", { name: "返回项目" }).click();
-  await expect(room).toBeHidden();
-  await expect.poll(micState).toEqual(["ended", false]);
 });

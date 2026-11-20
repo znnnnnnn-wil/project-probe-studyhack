@@ -28,6 +28,7 @@ export function ProjectPractice({ projectId, projectName, roundId, openOnLoad, d
   const [topic, setTopic] = useState("");
   const roomHadQuestion = useRef(false);
   const [voiceRoom, setVoiceRoom] = useState(false);
+  const [voiceReady, setVoiceReady] = useState<{ turnId: string; exchangeCount: number } | null>(null);
   const [practiceSurface] = useState(() => document.createElement("div"));
   const inlineContent = useRef<HTMLDivElement>(null);
   const roomContent = useRef<HTMLDivElement>(null);
@@ -120,8 +121,16 @@ export function ProjectPractice({ projectId, projectName, roundId, openOnLoad, d
   const pendingExchange = value.pendingExchange;
   const prompt = exchanges.at(-1)?.reply || turn?.question || "";
   const promptKey = questionId + ":" + exchanges.length;
+  const handleAutoListening = useCallback((active: boolean) => {
+    setAutoListening(active);
+    if (active) {
+      spokenPrompt.current = promptKey;
+      stop();
+    }
+  }, [promptKey, stop]);
+  const voiceReadyForPrompt = voiceReady !== null && voiceReady.turnId === questionId && voiceReady.exchangeCount === exchanges.length;
   const playbackAllowed = inRoom && sound && !!questionId && !!mediaConfig && speechSupported;
-  const needsPlayback = playbackAllowed && !waiting && !loadError && !voiceBusy &&
+  const needsPlayback = playbackAllowed && (!handsFree || voiceReadyForPrompt) && !waiting && !loadError && !voiceBusy && !autoListening && !autoProcessing &&
     value.status === "ACTIVE" && spokenPrompt.current !== promptKey;
   useLayoutEffect(() => {
     if (!needsPlayback || !questionId) return;
@@ -304,10 +313,12 @@ export function ProjectPractice({ projectId, projectName, roundId, openOnLoad, d
               turnId={turn.id}
               exchangeCount={exchanges.length}
               enabled
-              suspended={voiceProps.disabled || value.status !== "ACTIVE" || needsPlayback || speaking || preparing || !!answer.trim()}
+              suspended={voiceProps.disabled || value.status !== "ACTIVE" || !!answer.trim()}
+              promptPlaying={needsPlayback || preparing || speaking}
               onUtterance={sendVoice}
-              onListening={setAutoListening}
+              onListening={handleAutoListening}
               onProcessing={setAutoProcessing}
+              onReady={setVoiceReady}
             />
             <div className="practice-answer-actions">
               <button type="button" className="practice-voice-switch" onClick={switchToText}>改用文字回答</button>
