@@ -2433,7 +2433,6 @@ summary {
 }
 @media print {
   header,
-  .mode-strip,
   footer,
   .report-layout > aside,
   .page-head > .button,
