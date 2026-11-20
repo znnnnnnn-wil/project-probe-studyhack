@@ -110,12 +110,13 @@ export function useProjectPractice(projectId: string, roundId?: string) {
   }, [generating, load]);
   const submitted = !!value.turns?.at(-1)?.answer;
   useEffect(() => {
+    if (roundId) return;
     const warn = (event: BeforeUnloadEvent) => {
       if (current.current.trim() && !submitted && !value.report) { event.preventDefault(); event.returnValue = ""; }
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [submitted, value.report]);
+  }, [roundId, submitted, value.report]);
   const edit = (text: string) => {
     current.current = text; setAnswer(text);
     sessionStorage.setItem(key, text);

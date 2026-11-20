@@ -101,7 +101,9 @@ function App() {
   }, []);
   const props = { run, busy };
   const [route, search] = path.split("?", 2);
-  const [, nav, routeId] = route.split("/");
+  const [, nav, routeId, historyRoundId] = route.split("/");
+  const projectQuery = new URLSearchParams(search);
+  const projectRoundId = nav === "projects" && routeId && routeId !== "new" ? projectQuery.get("roundId") : null;
   const publicHome = path === "/" && !user;
   const publicPage = nav === "experience" || publicHome;
   const projectsActive = nav === "projects" || (!!user && !nav);
@@ -121,6 +123,10 @@ function App() {
       sessionStorage.setItem("auth:return", path);
     }
   }, [path, ready, user]);
+  useEffect(() => {
+    if (user && projectRoundId)
+      window.location.replace(`#/history/${routeId}/${encodeURIComponent(projectRoundId)}`);
+  }, [user, routeId, projectRoundId]);
   return (
     <>
       <header className={publicHome ? "site-header site-header--public-home" : "site-header"}>
@@ -233,11 +239,12 @@ function App() {
                 <Workspace {...props} />
               ) : route === "/projects/new" ? (
                 <NewProject {...props} />
+              ) : projectRoundId ? (
+                <Loading />
               ) : (
                 <Editor
                   key={path}
                   id={routeId}
-                  roundId={new URLSearchParams(search).get("roundId") || undefined}
                   openOnLoad={new URLSearchParams(search).get("interview") === "1"}
                   {...props}
                 />
@@ -247,7 +254,7 @@ function App() {
             ) : nav === "report" ? (
               <ReportPage key={path} id={routeId} {...props} />
             ) : nav === "history" ? (
-              <History {...props} />
+              <History projectId={routeId} roundId={historyRoundId} {...props} />
             ) : (
               <Empty
                 title="页面不存在"
