@@ -15,12 +15,35 @@ export const projectFields: [MaterialField, string, string][] = [
 
 const shortFields = ["name", "targetRole", "stack"];
 
+const legacyMaterialFields = [
+  ["responsibility", "个人职责"],
+  ["architecture", "项目架构"],
+  ["implementation", "实现细节"],
+  ["problems", "问题与难点"],
+  ["verification", "验证方式"],
+  ["materials", "补充材料"],
+] as const;
+
+export function mergeLegacyMaterials(project: Project) {
+  const next = { ...project };
+  const sections = legacyMaterialFields.flatMap(([field, title]) => {
+    const value = project[field];
+    next[field] = "";
+    return value?.trim() ? [`${title}\n${value}`] : [];
+  });
+  if (sections.length)
+    next.resume = [project.resume, ...sections].filter(Boolean).join("\n\n");
+  return { project: next, migrated: sections.length > 0 };
+}
+
 export function ProjectFields({
   project,
   onChange,
+  allowResumeOverflow = false,
 }: {
   project: Project;
   onChange: (field: MaterialField, value: string) => void;
+  allowResumeOverflow?: boolean;
 }) {
   return (
     <div className="form-fields">
@@ -42,7 +65,9 @@ export function ProjectFields({
                 rows={key === "resume" ? 6 : 3}
                 value={project[key] ?? ""}
                 placeholder={placeholder}
-                maxLength={12000}
+                maxLength={
+                  key === "resume" && allowResumeOverflow ? undefined : 12000
+                }
                 onChange={(event) => onChange(key, event.target.value)}
               />
             )}

@@ -54,6 +54,7 @@ for (const width of [1440, 390]) {
       name: "简历合成预约项目",
       resume: "简历合成预约项目：我实现预约接口。",
       responsibility: "我实现预约接口。",
+      architecture: "", implementation: "", problems: "", verification: "", materials: "",
     };
     await page.route("**/api/resume/import", (route) => {
       requests++;
@@ -95,8 +96,8 @@ for (const width of [1440, 390]) {
       imported.first().getByLabel("项目名称", { exact: true }),
     ).toHaveValue(candidate.name);
     await expect(
-      imported.first().getByLabel("项目经历"),
-    ).toHaveValue(candidate.resume);
+      imported.first().getByRole("textbox", { name: "项目经历", exact: true }),
+    ).toHaveValue(candidate.resume + "\n\n个人职责\n" + candidate.responsibility);
     const secondName = imported.nth(1).getByLabel("项目名称", { exact: true });
     await expect(secondName).toHaveValue("第二个合成项目");
     await secondName.fill("第二个合成项目（已编辑）");
