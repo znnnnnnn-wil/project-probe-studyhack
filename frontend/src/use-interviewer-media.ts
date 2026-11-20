@@ -78,11 +78,15 @@ export function useQuestionSpeech(ttsEnabled = false) {
     async (text: string, target: SpeechTarget, id: number) => {
       const controller = new AbortController();
       const audio = new Audio();
+      const active = () => id === speechId.current && !controller.signal.aborted;
       let objectUrl = "";
       let source: MediaElementAudioSourceNode | null = null;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       let frame = 0;
       const cleanup = () => {
+        if (controller.signal.aborted) return;
         controller.abort();
+        void reader?.cancel().catch(() => {});
         cancelAnimationFrame(frame);
         audio.pause();
         audio.removeAttribute("src");
@@ -106,7 +110,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
           },
         );
         if (!response.ok || !response.body) throw new Error("tts unavailable");
-        if (id !== speechId.current) return;
+        if (!active()) return;
         if (
           typeof MediaSource === "undefined" ||
           !MediaSource.isTypeSupported("audio/mpeg")
@@ -114,22 +118,27 @@ export function useQuestionSpeech(ttsEnabled = false) {
           throw new Error("streaming unsupported");
         const mediaSource = new MediaSource();
         objectUrl = URL.createObjectURL(mediaSource);
-        audio.src = objectUrl;
         await new Promise<void>((resolve, reject) => {
-          mediaSource.addEventListener("sourceopen", () => resolve(), {
-            once: true,
-          });
-          audio.addEventListener("error", () => reject(new Error("audio")), {
-            once: true,
-          });
+          const removeListeners = () => {
+            mediaSource.removeEventListener("sourceopen", opened);
+            audio.removeEventListener("error", failed);
+            controller.signal.removeEventListener("abort", aborted);
+          };
+          const opened = () => { removeListeners(); resolve(); };
+          const failed = () => { removeListeners(); reject(new Error("audio")); };
+          const aborted = () => { removeListeners(); reject(controller.signal.reason); };
+          mediaSource.addEventListener("sourceopen", opened, { once: true });
+          audio.addEventListener("error", failed, { once: true });
+          controller.signal.addEventListener("abort", aborted, { once: true });
+          audio.src = objectUrl;
         });
-        if (id !== speechId.current) return;
+        if (!active()) return;
         const buffer = mediaSource.addSourceBuffer("audio/mpeg");
         const chunks: Uint8Array<ArrayBuffer>[] = [];
         let appending = false;
         let streamDone = false;
         const pump = () => {
-          if (appending || buffer.updating) return;
+          if (!active() || mediaSource.readyState !== "open" || appending || buffer.updating) return;
           const next = chunks.shift();
           if (next) {
             appending = true;
@@ -143,7 +152,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
         buffer.addEventListener("updateend", () => {
           appending = false;
           pump();
-        });
+        }, { signal: controller.signal });
         const Context =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext })
@@ -151,7 +160,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
         const context =
           audioContext.current ?? (audioContext.current = new Context());
         await context.resume();
-        if (id !== speechId.current) return;
+        if (!active()) return;
         source = context.createMediaElementSource(audio);
         const analyser = context.createAnalyser();
         analyser.fftSize = 1024;
@@ -159,6 +168,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
         analyser.connect(context.destination);
         const samples = new Uint8Array(analyser.fftSize);
         const tick = () => {
+          if (!active()) return;
           frame = requestAnimationFrame(tick);
           analyser.getByteTimeDomainData(samples);
           let sum = 0;
@@ -173,45 +183,48 @@ export function useQuestionSpeech(ttsEnabled = false) {
         audio.addEventListener(
           "playing",
           () => {
-            if (id !== speechId.current) return;
+            if (!active()) return;
             startPlayback(id);
             tick();
           },
-          { once: true },
+          { once: true, signal: controller.signal },
         );
         const finished = () => {
-          if (id !== speechId.current) return;
+          if (!active()) return;
           cancelAnimationFrame(frame);
           mouthLevel.current = -1;
           setSpeaking(false);
           setPreparing(false);
           window.clearTimeout(startTimer.current);
         };
-        audio.addEventListener("ended", finished, { once: true });
-        audio.addEventListener("error", finished, { once: true });
-        const reader = response.body.getReader();
+        audio.addEventListener("ended", finished, { once: true, signal: controller.signal });
+        audio.addEventListener("error", finished, { once: true, signal: controller.signal });
+        const audioReader = response.body.getReader();
+        reader = audioReader;
         void (async () => {
           try {
             while (true) {
-              const { done, value } = await reader.read();
-              if (id !== speechId.current) return;
+              const { done, value } = await audioReader.read();
+              if (!active()) return;
               if (done) break;
               chunks.push(value as Uint8Array<ArrayBuffer>);
               pump();
             }
           } catch {
             // 流中断时播放已收到的部分，不再回退重播。
+          } finally {
+            reader = undefined;
+            audioReader.releaseLock();
           }
+          if (!active()) return;
           streamDone = true;
           pump();
         })();
         await audio.play();
       } catch (cause) {
+        const canFallback = active() && !(cause instanceof DOMException && cause.name === "AbortError");
         cleanup();
-        if (
-          id === speechId.current &&
-          !(cause instanceof DOMException && cause.name === "AbortError")
-        ) {
+        if (canFallback) {
           release.current = null;
           browserSpeak(text, id);
         }
