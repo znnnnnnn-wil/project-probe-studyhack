@@ -21,6 +21,9 @@ class PracticeApi {
     HttpServletRequest r, @PathVariable String id, @RequestParam(defaultValue = "") String roundId
   ) { return practice.get(auth.user(r), id, roundId); }
   @PostMapping("/projects/{id}/practice") Object run(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) { return practice.run(auth.user(r), id, input); }
+  @PostMapping("/projects/{id}/practice/cancel") Object cancel(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
+    return practice.cancel(auth.user(r), id, Store.required(input, "roundId", 36));
+  }
   @PostMapping("/projects/{id}/practice/score") Object score(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
     return practice.score(auth.user(r), id, Store.required(input, "roundId", 36));
   }

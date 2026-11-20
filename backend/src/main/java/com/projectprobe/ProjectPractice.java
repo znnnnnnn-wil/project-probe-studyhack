@@ -13,7 +13,7 @@ class ProjectPractice {
   List<Map<String, Object>> history(String user) {
     var projectNames = new HashMap<String, String>();
     return s.db.queryForList(
-      "SELECT t.project_id,t.round_id,t.round_number,t.started_at,t.status,t.body,t.lease_until,p.body AS project_body FROM project_practice_rounds t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status<>'CLEARED' ORDER BY t.started_at DESC,t.round_number DESC,t.round_id",
+      "SELECT t.project_id,t.round_id,t.round_number,t.started_at,t.status,t.body,t.lease_until,p.body AS project_body FROM project_practice_rounds t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status NOT IN ('CLEARED','CANCELLED') ORDER BY t.started_at DESC,t.round_number DESC,t.round_id",
       user
     ).stream().map(row -> {
       var body = s.decode(row.get("body"));
@@ -70,6 +70,10 @@ class ProjectPractice {
       return Map.of("status", "AVAILABLE", "maxTurns", maxTurns);
     }
     var row = rows.get(0);
+    if ("CANCELLED".equals(row.get("status"))) {
+      if (!roundId.isBlank()) throw error(404, "练习已取消");
+      return Map.of("status", "AVAILABLE", "maxTurns", maxTurns, "roundNumber", row.get("round_number"));
+    }
     var result = s.decode(row.get("body"));
     long lease = ((Number) row.get("lease_until")).longValue();
     result.put("roundId", row.get("round_id"));
@@ -80,6 +84,18 @@ class ProjectPractice {
       if ("GENERATING".equals(retest.get("status"))) retest.put("status", "FAILED");
     }
     result.put("leaseUntil", lease); return result;
+  }
+
+  Map<String, Object> cancel(String user, String projectId, String roundId) {
+    return s.locked(user, () -> {
+      projects.get(user, projectId);
+      var row = s.one("SELECT status FROM project_practice_rounds WHERE user_id=? AND project_id=? AND round_id=? AND status<>'CLEARED'",
+        user, projectId, roundId);
+      if ("COMPLETED".equals(row.get("status"))) throw error(409, "面试已完成，请查看本场报告");
+      s.db.update("UPDATE project_practice_rounds SET status='CANCELLED',lease_until=0,lease_token=NULL WHERE user_id=? AND project_id=? AND round_id=?",
+        user, projectId, roundId);
+      return get(user, projectId);
+    });
   }
 
   Map<String, Object> score(String user, String projectId, String roundId) {
