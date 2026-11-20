@@ -4,7 +4,7 @@ import { api } from "./api";
 import { EvidenceReview } from "./evidence-review";
 import { PracticeRetest } from "./practice-retest";
 import { PracticeReview } from "./practice-review";
-import type { ScoreDimension } from "./types";
+import type { Report, ScoreDimension } from "./types";
 import { Button, Loading, type Actions } from "./ui";
 import { useProjectPractice } from "./use-project-practice";
 import type { Practice } from "./use-project-practice";
@@ -17,6 +17,10 @@ const scoreLabels: Record<ScoreDimension["key"], string> = {
   depth: "技术深度",
   validation: "验证与边界",
 };
+
+function hasScore(scoring: Report["scoring"]) {
+  return scoring?.dimensions.some(dimension => typeof dimension.score === "number") ?? false;
+}
 
 function PracticeExport({ practice }: { practice: Practice }) {
   const { report, retest, turns = [] } = practice;
@@ -185,7 +189,7 @@ export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Act
   </div>;
   if (loading) return readError || <Loading />;
   const allAnswered = (data.turns?.filter(turn => turn.answer).length ?? 0) >= (data.maxTurns || 1);
-  const canScore = data.status === "COMPLETED" && data.modelMode === "live" && data.report?.mode === "live" && !data.report.scoring &&
+  const canScore = data.status === "COMPLETED" && data.modelMode === "live" && data.report?.mode === "live" && !hasScore(data.report.scoring) &&
     data.turns?.some(turn => turn.answer.trim());
   const scoreDisabled = scorePending || busy || loadError || data.retest?.status === "GENERATING";
 
@@ -195,7 +199,7 @@ export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Act
     setScorePending(true);
     try {
       const updated = await api<Practice>(`/projects/${encodeURIComponent(projectId)}/practice/score`, "POST", { roundId });
-      if (updated?.roundId !== roundId || !updated.report?.scoring) throw new Error("评分未生成，请重试。");
+      if (updated?.roundId !== roundId || !hasScore(updated.report?.scoring)) throw new Error("评分未生成，请重试。");
       acceptRetest(updated);
       onScored?.();
     } catch (cause) {
