@@ -56,7 +56,14 @@ export type Finding = {
   evidence: { turnId: string; question: string; quote: string }[];
   materials: Fact[];
 };
+export type ScoreDimension = {
+  key: "clarity" | "ownership" | "depth" | "validation";
+  score: number | null;
+  reason: string;
+  turnIds: string[];
+};
 export type Report = {
+  scoring?: { total: number | null; dimensions: ScoreDimension[] };
   qualityReview?: { version: string; status: string; model: string; humanVerified: false };
   comparisons?: { topic: string; status: string; assessment: string;
     previousEvidence: { turnId: string; question: string; quote: string }[];

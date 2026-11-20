@@ -11,23 +11,37 @@ class ProjectPractice {
   @org.springframework.beans.factory.annotation.Autowired JourneyMetrics journey;
   ProjectPractice(Store s, ProjectService projects, ModelService model) { this.s = s; this.projects = projects; this.model = model; }
   List<Map<String, Object>> history(String user) {
+    var projectNames = new HashMap<String, String>();
     return s.db.queryForList(
-      "SELECT t.project_id,t.round_id,t.round_number,t.status,t.body,t.lease_until FROM project_practice_rounds t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status<>'CLEARED' ORDER BY t.started_at DESC,t.round_number DESC,t.round_id",
+      "SELECT t.project_id,t.round_id,t.round_number,t.started_at,t.status,t.body,t.lease_until,p.body AS project_body FROM project_practice_rounds t JOIN projects p ON p.id=t.project_id AND p.user_id=t.user_id WHERE t.user_id=? AND t.status<>'CLEARED' ORDER BY t.started_at DESC,t.round_number DESC,t.round_id",
       user
     ).stream().map(row -> {
       var body = s.decode(row.get("body"));
       var project = PracticeRetest.object(body.get("project"));
       var retest = PracticeRetest.object(body.get("retest"));
-      return Map.<String, Object>of(
-        "projectId", row.get("project_id"),
+      var report = PracticeRetest.object(body.get("report"));
+      var scoring = PracticeRetest.object(report.get("scoring"));
+      boolean hasScoring = PracticeScoring.hasScore(scoring);
+      var firstFinding = report.get("findings") instanceof List<?> findings && !findings.isEmpty()
+        ? PracticeRetest.object(findings.get(0)) : Map.<String, Object>of();
+      String projectId = str(row, "project_id");
+      String name = projectNames.computeIfAbsent(projectId, id -> str(s.decode(row.get("project_body")), "name"));
+      Map<String, Object> summary = new LinkedHashMap<>(Map.of(
+        "projectId", projectId,
         "roundId", row.get("round_id"),
         "roundNumber", row.get("round_number"),
-        "name", str(project, "name"),
+        "name", name.isBlank() ? str(project, "name") : name,
         "status", status(row),
         "answeredCount", ReportComparison.answered(body, "turns").size(),
         "maxTurns", body.getOrDefault("maxTurns", 1),
         "retestCompleted", "COMPLETED".equals(retest.get("status"))
-      );
+      ));
+      summary.put("startedAt", row.get("started_at"));
+      summary.put("interviewTopic", str(body, "interviewTopic"));
+      summary.put("hasScoring", hasScoring);
+      summary.put("totalScore", scoring.get("total"));
+      summary.put("prioritySuggestion", str(firstFinding, "task"));
+      return summary;
     }).toList();
   }
 
@@ -68,6 +82,49 @@ class ProjectPractice {
     result.put("leaseUntil", lease); return result;
   }
 
+  Map<String, Object> score(String user, String projectId, String roundId) {
+    String token = id();
+    var answered = s.locked(user, () -> {
+      projects.get(user, projectId);
+      var row = s.one("SELECT status,body,lease_until FROM project_practice_rounds WHERE user_id=? AND project_id=? AND round_id=? AND status<>'CLEARED'",
+        user, projectId, roundId);
+      var body = s.decode(row.get("body"));
+      var report = PracticeRetest.object(body.get("report"));
+      if (!"COMPLETED".equals(row.get("status")) || !"live".equals(report.get("mode")) || !"live".equals(body.get("modelMode")))
+        throw error(409, "只有已完成的 AI 面试报告可以补评分");
+      if (PracticeScoring.hasScore(PracticeRetest.object(report.get("scoring")))) return List.<Map<String, Object>>of();
+      if (!"live".equals(model.mode)) throw error(409, "当前服务未启用 AI 评分");
+      long started = now();
+      if (((Number) row.get("lease_until")).longValue() > started)
+        throw error(409, "本场评分或专项复测正在生成，请稍后再试");
+      var turns = ReportComparison.answered(body, "turns");
+      if (turns.isEmpty()) throw error(409, "本场没有已保存的回答可以评分");
+      var retest = PracticeRetest.object(body.get("retest"));
+      if ("GENERATING".equals(retest.get("status"))) retest.put("status", "FAILED");
+      s.db.update("UPDATE project_practice_rounds SET body=?,lease_until=?,lease_token=? WHERE user_id=? AND round_id=?",
+        s.encode(body), started + 90000, token, user, roundId);
+      return turns;
+    });
+    if (answered.isEmpty()) return get(user, projectId, roundId);
+
+    try {
+      var scoring = model.practiceScore(answered);
+      s.locked(user, () -> {
+        requireLease(user, roundId, token);
+        var row = s.one("SELECT body FROM project_practice_rounds WHERE user_id=? AND round_id=?", user, roundId);
+        var body = s.decode(row.get("body"));
+        PracticeRetest.object(body.get("report")).put("scoring", scoring);
+        s.db.update("UPDATE project_practice_rounds SET body=? WHERE user_id=? AND round_id=?",
+          s.encode(body), user, roundId);
+        return null;
+      });
+    } finally {
+      s.db.update("UPDATE project_practice_rounds SET lease_until=0,lease_token=NULL WHERE user_id=? AND round_id=? AND lease_token=?",
+        user, roundId, token);
+    }
+    return get(user, projectId, roundId);
+  }
+
   Map<String, Object> requireUnansweredTurn(String user, String projectId, String turnId, Object exchangeCount) {
     var current = get(user, projectId);
     if (!"ACTIVE".equals(current.get("status"))) {
@@ -93,7 +150,7 @@ class ProjectPractice {
         if (!status.equals("COMPLETED") || !roundId.equals(required(input, "roundId", 36)))
           throw error(409, "练习状态已变化，请刷新后再开始");
         if (((Number) current.get("leaseUntil")).longValue() > now())
-          throw error(409, "复测报告正在生成，请稍后再开始");
+          throw error(409, "本场评分或专项复测正在生成，请稍后再开始");
       } else if (status.equals("COMPLETED")) return null;
       if (status.equals("AVAILABLE") || restart) {
         if (!answer.isBlank()) throw error(409, "当前问题已变化，请重新读取后再提交");
