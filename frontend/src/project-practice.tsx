@@ -129,7 +129,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
   const thinking = !loadError && (pending || value.status === "GENERATING");
   const avatarState = speaking ? "speaking" : thinking ? "thinking" : listening ? "listening" : "idle";
   const avatarStatus = speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
-  const action = <Button disabled={busy || autoProcessing || (!loadError && (waiting || !canUseVoiceRoom || (hasDraft && answer.length > 3000)))} onClick={() => {
+  const action = <Button disabled={busy || autoProcessing || cancelling || (!loadError && (waiting || (hasDraft && answer.length > 3000)))} onClick={() => {
     if (loadError) void load(); else void run(() => submit());
   }}>
     {loadError ? "重新读取训练状态" : waiting ? "正在生成，自动恢复进度…" : hasDraft ? "重试发送" : "重试或恢复训练"}<ArrowRight size={16} />
@@ -233,7 +233,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
           <section className="practice-question practice-setup">
             <h3>{value.report ? "开始新一轮" : "开始项目面试"}</h3>
             {error && <p className="practice-error" role="alert">{error}</p>}
-            {loadError || value.status === "GENERATING" ? action : <>
+            {loadError || value.status === "GENERATING" || (value.status === "FAILED" && value.roundId && !value.report) ? action : <>
               {(!value.roundId || value.report) && <label>
                 面试主题（选填）
                 <input value={topic} maxLength={200} disabled={busy || waiting}
@@ -287,10 +287,13 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
               cancelDisabled={!value.roundId || !!value.report}
               onCancel={() => void cancelInterview()}
               onUtterance={sendVoice}
+              onStateConflict={load}
               onListening={handleAutoListening}
               onProcessing={setAutoProcessing}
               onReady={setVoiceReady}
         />}
+        {!handsFree && value.roundId && !value.report && <Button secondary disabled={cancelling}
+          onClick={() => void cancelInterview()}>{cancelling ? "正在取消…" : "取消语音面试"}</Button>}
         {live && (loadError || (value.status === "FAILED" && !hasDraft)) && action}
         {live && !handsFree && !loadError && (canUseVoiceRoom ? value.status === "ACTIVE" && !hasDraft && (
           <div className="practice-voice-consent">

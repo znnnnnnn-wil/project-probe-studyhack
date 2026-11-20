@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-export type TestVoiceWindow = Window & {
+export type TestVoiceWindow = Window & typeof globalThis & {
   testMic?: MediaStreamTrack;
   testMicRequested: boolean;
   testGrantMic: () => void;
