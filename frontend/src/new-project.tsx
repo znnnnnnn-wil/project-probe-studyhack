@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Check, PencilLine, Sparkles, Upload, X } from "lucide-react";
 import { api, demoProject, emptyProject, go } from "./api";
-import { ProjectFields, projectFields } from "./project-fields";
+import { ProjectFields, projectFields, mergeLegacyMaterials } from "./project-fields";
 import type { MaterialField } from "./project-fields";
 import { ResumeImport } from "./resume-import";
 import type { ResumeCandidate } from "./resume-import";
@@ -42,7 +42,9 @@ function readResumeDraft(): ResumeDraft | null {
         typeof entry.project?.name === "string" &&
         typeof entry.project.resume === "string",
     )
-    ? saved
+    ? { ...saved, projects: saved.projects.map(entry => ({
+        ...entry, project: mergeLegacyMaterials({ ...blankProject, ...entry.project }).project,
+      })) }
     : null;
 }
 
@@ -75,7 +77,7 @@ function ImportedProjectFields({
       >
         <X size={15} /> 移除
       </button>
-      <ProjectFields project={entry.project} onChange={onChange} />
+      <ProjectFields project={entry.project} onChange={onChange} allowResumeOverflow />
     </fieldset>
   );
 }
@@ -87,7 +89,7 @@ export function NewProject({ run, busy }: Actions) {
     const saved = readDraft<Project>(manualKey);
     return typeof saved?.name === "string" &&
       typeof saved.background === "string"
-      ? { ...blankProject, ...saved }
+      ? mergeLegacyMaterials({ ...blankProject, ...saved }).project
       : null;
   });
   const [imported, setImported] = useState(readResumeDraft);
@@ -98,6 +100,8 @@ export function NewProject({ run, busy }: Actions) {
   const [formError, setFormError] = useState("");
   const disabled = busy || importBusy;
   const entries = imported?.projects ?? [];
+  const longResume = (mode === "resume" ? entries.map(entry => entry.project) : [manual ?? blankProject])
+    .findIndex(project => project.resume.length > 12000);
 
   const updateManual = (project: Project | null) => {
     setManual(project);
@@ -130,13 +134,13 @@ export function NewProject({ run, busy }: Actions) {
     updateImported(
       candidates.map((candidate) => ({
         key: crypto.randomUUID(),
-        project: { ...blankProject, ...candidate },
+        project: mergeLegacyMaterials({ ...blankProject, ...candidate }).project,
       })),
     );
   };
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (disabled || saving.current) return;
+    if (disabled || saving.current || longResume >= 0) return;
     const batch = mode === "resume" ? imported : null;
     if (mode === "resume" && !batch) return;
     const projects = batch
@@ -252,6 +256,7 @@ export function NewProject({ run, busy }: Actions) {
                 </div>
                 <ProjectFields
                   project={manual ?? blankProject}
+                  allowResumeOverflow
                   onChange={(field, value) =>
                     updateManual({ ...blankProject, ...manual, [field]: value })
                   }
@@ -291,13 +296,16 @@ export function NewProject({ run, busy }: Actions) {
                 ))}
               </div>
             )}
+            {longResume >= 0 && <p className="action-error" role="alert">
+              {mode === "resume" && `项目 ${longResume + 1} 的`}项目经历超过 12000 字，全文已保留。请整理至 12000 字以内后保存。
+            </p>}
             {formError && (
               <p className="action-error" role="alert">
                 {formError}
               </p>
             )}
             <div className="form-bottom">
-              <Button type="submit" disabled={disabled}>
+              <Button type="submit" disabled={disabled || longResume >= 0}>
                 {mode === "resume"
                   ? `保存 ${entries.length} 个项目`
                   : "保存项目材料"}

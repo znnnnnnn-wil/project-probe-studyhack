@@ -54,7 +54,11 @@ test("同一项目多轮深挖的复测入口按父训练独立关联", async ({
   await expect(
     page.getByRole("button", { name: "开始关联复测", exact: true }),
   ).toHaveCount(1);
-  await page.getByRole("button", { name: "开始关联复测", exact: true }).click();
+  const start = page.getByRole("button", { name: "开始关联复测", exact: true });
+  await expect(start).toBeDisabled();
+  await page.getByRole("button", { name: "保存项目材料", exact: true }).click();
+  await expect(start).toBeEnabled();
+  await start.click();
   await expect(page).toHaveURL(/#\/trainings\/[a-f0-9-]+$/);
   const freshId = page.url().split("/").pop();
   const value = await (

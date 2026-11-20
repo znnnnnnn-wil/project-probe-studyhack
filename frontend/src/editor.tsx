@@ -13,7 +13,7 @@ import { Button, Loading, PageHead } from "./ui";
 import type { Actions } from "./ui";
 import { useMounted } from "./use-read-scope";
 import "./editor.css";
-import { ProjectFields } from "./project-fields";
+import { ProjectFields, mergeLegacyMaterials } from "./project-fields";
 
 export function Editor({ id, run, busy }: Actions & { id: string }) {
   const mounted = useMounted();
@@ -25,8 +25,13 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
   const [history, setHistory] = useState<TrainingSummary[]>([]);
   const [startKey] = useState(crypto.randomUUID());
   const [draftNotice, setDraftNotice] = useState("");
+  const [legacyNotice, setLegacyNotice] = useState(false);
+  const resumeTooLong = p.resume.length > 12000;
   const draftKey = "project-draft:" + id;
   const restore = (project: Project) => {
+    let source = project;
+    let restored = false;
+    setDraftNotice("");
     const raw = sessionStorage.getItem(draftKey);
     if (raw)
       try {
@@ -36,16 +41,20 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
           typeof draft.name === "string" &&
           typeof draft.background === "string"
         ) {
-          setP({ ...project, ...draft });
-          setDirty(true);
+          // Cleared legacy fields in a migrated draft must override the server.
+          source = { ...project, ...draft };
+          restored = true;
           setDraftNotice("已恢复此标签页未保存的材料");
-          return;
+        } else {
+          setDraftNotice("材料已在其他页面更新，旧草稿未覆盖新版本");
         }
-        setDraftNotice("材料已在其他页面更新，旧草稿未覆盖新版本");
       } catch {
         sessionStorage.removeItem(draftKey);
       }
-    setP(project);
+    const merged = mergeLegacyMaterials(source);
+    setP(merged.project);
+    setDirty(restored || merged.migrated);
+    setLegacyNotice(merged.migrated || mergeLegacyMaterials(project).migrated);
   };
   useEffect(() => {
     const controller = new AbortController();
@@ -77,14 +86,17 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [p, dirty, draftKey]);
-  const save = () =>
-    run(async () => {
+  const save = () => {
+    if (busy || resumeTooLong) return;
+    return run(async () => {
       const result = await api<Project>("/projects/" + id, "PUT", p);
       setP(result);
       setDirty(false);
+      setLegacyNotice(false);
       sessionStorage.removeItem(draftKey);
       setDraftNotice("材料已保存");
     });
+  };
   const startRetest = (parentId: string) =>
     run(async () => {
       const t = await api<Training>("/trainings", "POST", {
@@ -119,6 +131,11 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
           {draftNotice}
         </p>
       )}
+      {legacyNotice && (
+        <p className="save-notice">
+          旧版材料已合并到“项目经历”，可修改或删除；保存后以当前五字段为准。尚未修改服务端，历史快照不变。
+        </p>
+      )}
       <div className="editor-layout">
         <div id="project-materials" className="materials-panel">
           <div className="panel-heading">
@@ -150,7 +167,7 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
                 )
               )
                 return;
-              setP({
+              const merged = mergeLegacyMaterials({
                 ...p,
                 ...candidate,
                 targetRole: candidate.targetRole || p.targetRole,
@@ -158,6 +175,8 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
                 facts: [],
                 factsConfirmed: false,
               });
+              setP(merged.project);
+              setLegacyNotice((current) => current || merged.migrated);
               setDirty(true);
               setDraftNotice("已填入简历项目，请核对后保存");
             }}
@@ -168,16 +187,24 @@ export function Editor({ id, run, busy }: Actions & { id: string }) {
               save();
             }}
           >
-            <ProjectFields project={p}
+            <ProjectFields
+              project={p}
+              allowResumeOverflow
               onChange={(field, value) => {
                 setP({ ...p, [field]: value });
                 setDirty(true);
-              }} />
+              }}
+            />
+            {resumeTooLong && (
+              <p className="action-error" role="alert">
+                项目经历超过 12000 字（当前 {p.resume.length} 字），全文已保留在草稿中。请自行备份并整理至 12000 字以内后保存。
+              </p>
+            )}
             <div className="form-bottom">
               <span>
                 {dirty ? "有尚未保存的修改" : "材料已保存"}
               </span>
-              <Button type="submit" disabled={busy}>
+              <Button type="submit" disabled={busy || resumeTooLong}>
                 保存项目材料 <Check size={16} />
               </Button>
             </div>
