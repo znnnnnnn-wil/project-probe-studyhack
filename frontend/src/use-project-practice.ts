@@ -25,6 +25,7 @@ export type Practice = {
 export function useProjectPractice(projectId: string, roundId?: string) {
   const [value, setValue] = useState<Practice>({ status: "LOADING" });
   const [answer, setAnswer] = useState("");
+  const [staleDraft, setStaleDraft] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState(false);
@@ -41,15 +42,25 @@ export function useProjectPractice(projectId: string, roundId?: string) {
   const endpoint = `/projects/${projectId}/practice`;
   const readEndpoint = roundId ? endpoint + "?roundId=" + encodeURIComponent(roundId) : endpoint;
   const key = "practice-draft:" + projectId;
+  const roundKey = "practice-draft-round:" + projectId;
   const turnKey = "practice-draft-turn:" + projectId;
   const exchangeKey = "practice-draft-exchange:" + projectId;
+  const matchesDraftTarget = useCallback((practice: Practice) => {
+    const turn = practice.turns?.at(-1);
+    const draftRound = sessionStorage.getItem(roundKey);
+    return !!turn && (!draftRound || draftRound === practice.roundId) &&
+      sessionStorage.getItem(turnKey) === turn.id &&
+      sessionStorage.getItem(exchangeKey) === String(turn.exchanges?.length ?? 0);
+  }, [exchangeKey, roundKey, turnKey]);
   const clearDraft = useCallback(() => {
     current.current = "";
     setAnswer("");
+    setStaleDraft(false);
     sessionStorage.removeItem(key);
+    sessionStorage.removeItem(roundKey);
     sessionStorage.removeItem(turnKey);
     sessionStorage.removeItem(exchangeKey);
-  }, [exchangeKey, key, turnKey]);
+  }, [exchangeKey, key, roundKey, turnKey]);
   const discardDraft = () => {
     clearDraft();
     setNotice("");
@@ -76,14 +87,19 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       clearDraft();
       setNotice("上一题回答已保存，请继续当前追问。");
     } else if (draftTurn === turn?.id && draftExchange !== null && current.current.trim() && (
-      (next.pendingExchange?.exchangeCount === Number(draftExchange) &&
+      (next.pendingExchange?.turnId === draftTurn &&
+        next.pendingExchange.exchangeCount === Number(draftExchange) &&
         next.pendingExchange.answer === current.current.trim()) ||
       turn?.exchanges?.[Number(draftExchange)]?.answer === current.current.trim()
     )) {
       clearDraft();
       setNotice("");
+    } else {
+      const stale = !!turn && !!current.current.trim() && !matchesDraftTarget(next);
+      setStaleDraft(stale);
+      if (stale) setNotice("");
     }
-  }, [clearDraft, exchangeKey, roundId, turnKey]);
+  }, [clearDraft, exchangeKey, matchesDraftTarget, roundId, turnKey]);
   const acceptRetest = useCallback((next: Practice) => {
     const currentRound = roundId || acceptedRound.current;
     if (mounted.current && (!currentRound || next.roundId === currentRound)) accept(next);
@@ -125,7 +141,9 @@ export function useProjectPractice(projectId: string, roundId?: string) {
   }, [roundId, submitted, value.report]);
   const edit = (text: string) => {
     current.current = text; setAnswer(text);
+    setStaleDraft(false);
     sessionStorage.setItem(key, text);
+    if (value.roundId) sessionStorage.setItem(roundKey, value.roundId);
     const turn = value.turns?.at(-1);
     if (turn) {
       sessionStorage.setItem(turnKey, turn.id);
@@ -169,6 +187,8 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     if (restart && !value.roundId) return;
     const turn = value.turns?.at(-1);
     const text = (utterance ?? current.current).trim();
+    if (!restart && utterance === undefined && text && !submitted && !value.pendingExchange && turn &&
+        !matchesDraftTarget(value)) return;
     const selectedTopic = topic.trim();
     const topicInput = selectedTopic ? { topic: selectedTopic } : {};
     const message = restart ? { ...topicInput, restart: true, roundId: value.roundId } : !submitted && !value.pendingExchange && turn && text
@@ -216,5 +236,5 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       }
     }
   };
-  return { value, answer, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel, acceptRetest };
+  return { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel, acceptRetest };
 }
