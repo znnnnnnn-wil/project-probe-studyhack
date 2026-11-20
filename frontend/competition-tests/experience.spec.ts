@@ -14,12 +14,25 @@ test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", as
   ).toBeVisible();
   await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
   await page.getByRole("button", { name: "开始五轮练习" }).click();
-  await page.getByLabel("本轮回答").fill("第一轮草稿：我负责预约接口。");
+  const room = page.getByRole("dialog", { name: "示例面试室" });
+  await expect(room).toBeVisible();
+  await expect(room.getByText("第 1 / 5 题", { exact: true })).toBeVisible();
+  await expect(room.getByRole("button", { name: "同意并开始语音面试" })).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("example-room-desktop.png"), fullPage: true });
+  await room.getByLabel("本轮回答").fill("第一轮草稿：我负责预约接口。");
+  await room.getByRole("button", { name: "返回练习", exact: true }).click();
+  await expect(room).not.toBeVisible();
+  await expect(page.getByLabel("本轮回答")).toHaveValue("第一轮草稿：我负责预约接口。");
+  await page.getByRole("button", { name: "进入面试室", exact: true }).click();
+  await expect(room.getByLabel("本轮回答")).toHaveValue("第一轮草稿：我负责预约接口。");
   await page.reload();
   await expect(page.getByLabel("本轮回答")).toHaveValue(
     "第一轮草稿：我负责预约接口。",
   );
+  await expect(room).not.toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "进入面试室", exact: true }).click();
+  await expect(room).toBeVisible();
   for (let i = 0; i < 5; i++) {
     await page
       .getByLabel("本轮回答")
@@ -31,6 +44,7 @@ test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", as
       .click();
     if (i < 4) await expect(page.getByLabel("本轮回答")).toHaveValue("");
   }
+  await expect(room).not.toBeVisible();
   await expect(
     page.getByRole("heading", { name: "这轮练习，留下了什么？" }),
   ).toBeVisible();
@@ -89,6 +103,7 @@ test("项目语音面试刷新后可续训，完成后可回看档案", async ({
     answer = `第${i + 1}题：我负责预约接口，通过数据库唯一约束避免重复写入，尚未验证并发。`;
     await voice.speak();
   }
+  await expect(page).toHaveURL(new RegExp(`#/history/${project}/[^/]+$`));
   const archive = page.getByRole("region", { name: "面试详情" });
   await expect(archive.getByRole("region", { name: "本场评分" })).toContainText("未评分");
   await expect(page.locator("#project-materials")).toHaveCount(0);
@@ -139,7 +154,10 @@ test("手机端可选择 RAG 场景，回看旧回答不会覆盖当前草稿", 
     page.getByRole("button", { name: /RAG \/ Agent/ }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "开始五轮练习" }).click();
-  await page.getByLabel("本轮回答").fill("我负责文档切分。");
+  const room = page.getByRole("dialog", { name: "示例面试室" });
+  await expect(room).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("example-room-mobile.png"), fullPage: true });
+  await room.getByLabel("本轮回答").fill("我负责文档切分。");
   await page.getByRole("button", { name: "保存回答，继续追问" }).click();
   await page.getByLabel("本轮回答").fill("当前题目的未提交草稿");
   await page.getByRole("button", { name: "个人职责", exact: true }).click();

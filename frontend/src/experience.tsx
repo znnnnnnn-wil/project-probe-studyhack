@@ -307,7 +307,11 @@ function FullExperience() {
                 <button
                   type="button"
                   className="button button-lg"
-                  onClick={() => setState((s) => ({ ...s, started: true }))}
+                  aria-haspopup="dialog"
+                  onClick={() => {
+                    setState((s) => ({ ...s, started: true }));
+                    openRoom(false);
+                  }}
                 >
                   开始五轮练习 <ArrowRight size={17} aria-hidden="true" />
                 </button>

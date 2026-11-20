@@ -154,9 +154,11 @@ test("未登录示例不发出写入请求，登录后回到原页面", async ({
   await page.goto("/");
   await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
   await page.getByRole("button", { name: "开始五轮练习", exact: true }).click();
-  const answer = page.getByLabel("本轮回答");
+  const room = page.getByRole("dialog", { name: "示例面试室" });
+  await expect(room).toBeVisible();
+  const answer = room.getByLabel("本轮回答");
   await answer.fill("我需要核对检查和写入的并发边界。");
-  await page.getByRole("button", { name: "保存回答，继续追问" }).click();
+  await room.getByRole("button", { name: "保存回答，继续追问" }).click();
   await expect(answer).toHaveValue("");
   expect(writes).toEqual([]);
   await page.goto("/#/projects/new");

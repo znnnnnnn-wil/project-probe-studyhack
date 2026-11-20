@@ -38,12 +38,14 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await fits(page);
     await page.goto("/#/experience");
     await page.getByRole("button", { name: "开始五轮练习", exact: true }).click();
+    const room = page.getByRole("dialog", { name: "示例面试室" });
+    await expect(room).toBeVisible();
     await ready(page);
     const answer = page.getByLabel("本轮回答", { exact: true });
     await answer.fill("我负责预约接口，仍需验证并发。");
     for (let cycle = 0; cycle < 2; cycle++) {
-      await page.getByRole("button", { name: "进入面试室", exact: true }).click();
-      const room = page.getByRole("dialog", { name: "示例面试室" });
+      if (cycle > 0)
+        await page.getByRole("button", { name: "进入面试室", exact: true }).click();
       await expect(room).toBeVisible();
       await expect(page.locator("canvas")).toHaveCount(1);
       await expect(room.locator("canvas")).toHaveCount(1);
