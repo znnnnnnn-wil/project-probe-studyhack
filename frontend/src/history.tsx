@@ -1,22 +1,42 @@
 import { useState } from "react";
-import { ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, MessageSquare, RefreshCw } from "lucide-react";
 import { go } from "./api";
 import type { Training, TrainingSummary, ListPage } from "./types";
 import { Empty, Loading, PageHead, statusLabel, Button } from "./ui";
 import type { Actions } from "./ui";
 import { useApiResource } from "./use-api-resource";
 import { TrainingSelect } from "./training-select";
+import { PracticeArchive } from "./practice-archive";
+import "./history.css";
 
 type PracticeRecord = {
   projectId: string;
-  roundId?: string;
-  roundNumber?: number;
+  roundId: string;
+  roundNumber: number;
   name: string;
   status: string;
   answeredCount: number;
   maxTurns: number;
-  retestCompleted: boolean;
+  retestCompleted?: boolean;
+  startedAt: number;
+  interviewTopic: string;
+  totalScore?: number | null;
+  hasScoring?: boolean;
+  prioritySuggestion: string;
 };
+
+function groupByProject(records: PracticeRecord[]) {
+  const projects = new Map<string, PracticeRecord[]>();
+  for (const record of records) {
+    const rounds = projects.get(record.projectId);
+    if (rounds) rounds.push(record);
+    else projects.set(record.projectId, [record]);
+  }
+  for (const rounds of projects.values()) {
+    rounds.sort((a, b) => b.roundNumber - a.roundNumber);
+  }
+  return projects;
+}
 
 function Transcript({ id }: { id: string }) {
   const { data, error, reload } = useApiResource<Training>("/trainings/" + id);
@@ -93,7 +113,9 @@ function HistoryRecord({ training: t }: { training: TrainingSummary }) {
   );
 }
 
-export function History(_props: Actions) {
+type HistoryProps = Actions & { projectId?: string; roundId?: string };
+
+export function History({ busy, run, projectId, roundId }: HistoryProps) {
   const [key, setKey] = useState("");
   const [offset, setOffset] = useState(0);
   const practice = useApiResource<PracticeRecord[]>("/practice-history");
@@ -105,6 +127,26 @@ export function History(_props: Actions) {
   );
   const choices =
     useApiResource<{ key: string; name: string }[]>("/training-projects");
+  const projects = groupByProject(practice.data ?? []);
+  const rounds = projectId ? projects.get(projectId) : undefined;
+  const record = rounds?.find(round => round.roundId === roundId);
+  const projectHistoryPath = projectId ? `#/history/${encodeURIComponent(projectId)}` : "#/history";
+  if (projectId && roundId) {
+    return (
+      <section className="page practice-history-page">
+        <a className="practice-history-back" href={projectHistoryPath}>
+          <ArrowLeft size={16} aria-hidden="true" /> 返回项目训练记录
+        </a>
+        <div className="page-head">
+          <div>
+            <h1>{record ? `第 ${record.roundNumber} 次面试` : "面试记录"}</h1>
+            {rounds && <p>{rounds[0].name}</p>}
+          </div>
+        </div>
+        <PracticeArchive key={`${projectId}/${roundId}`} projectId={projectId} roundId={roundId} run={run} busy={busy} onScored={practice.reload} />
+      </section>
+    );
+  }
   return (
     <section className="page">
       <PageHead
@@ -142,7 +184,7 @@ export function History(_props: Actions) {
         </section>
       )}
       <div className="panel history-list">
-        <TrainingSelect label="筛选训练项目" value={key} disabled={_props.busy || !choices.data}
+        <TrainingSelect label="筛选训练项目" value={key} disabled={busy || !choices.data}
           onChange={value => { setKey(value); setOffset(0); }}
           options={[{ value: "", label: "全部项目" }, ...(choices.data || []).map(choice => ({ value: choice.key, label: choice.name }))]} />
         {choices.error && (
