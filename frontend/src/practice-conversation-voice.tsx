@@ -21,6 +21,7 @@ type PracticeConversationVoiceProps = VoiceTarget & {
   cancelDisabled?: boolean;
   onCancel: () => void;
   onUtterance: (text: string) => Promise<void> | void;
+  onStateConflict: () => Promise<void>;
   onListening?: (listening: boolean) => void;
   onProcessing?: (processing: boolean) => void;
   onReady?: (target: VoiceTarget | null) => void;
@@ -185,7 +186,9 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
         if (cause instanceof ApiError && cause.status === 422) {
           setNotice(cause.message);
         } else if (cause instanceof ApiError && cause.status === 409) {
-          setNotice("题目状态已更新，请在当前题继续。");
+          fail("题目状态已变化，正在重新读取；本段录音不会重复上传。");
+          request = undefined;
+          await current.current.onStateConflict();
         } else {
           fail(
             cause instanceof Error ? cause.message : "语音转写失败，可用刚才的录音重试。",

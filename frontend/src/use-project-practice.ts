@@ -140,13 +140,24 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     const isCurrent = () => mounted.current && version === sequence.current;
     setCancelling(true); setError("");
     try {
-      await api<Practice>(endpoint + "/cancel", "POST", { roundId: value.roundId });
+      const next = await api<Practice>(endpoint + "/cancel", "POST", { roundId: value.roundId });
       if (!isCurrent()) return false;
-      clearDraft();
-      setNotice("");
+      accept(next);
       return true;
     } catch (e) {
-      if (isCurrent()) setError(e instanceof Error ? e.message : "取消面试失败，请重试");
+      if (!isCurrent()) return false;
+      try {
+        const next = await api<Practice>(readEndpoint);
+        if (!isCurrent()) return false;
+        accept(next);
+        if (next.status === "AVAILABLE") return true;
+        if (!next.report) setError(e instanceof Error ? e.message : "取消面试失败，请重试");
+      } catch {
+        if (isCurrent()) {
+          setLoadError(true);
+          setError("取消结果暂未确认，请重新读取训练状态。");
+        }
+      }
       return false;
     } finally {
       cancelRequest.current = false;
@@ -197,7 +208,13 @@ export function useProjectPractice(projectId: string, roundId?: string) {
         setError(message);
         setValue(previous => ({ ...previous, status: "FAILED" }));
       }
-    } finally { working.current = false; if (mounted.current) setPending(false); }
+    } finally {
+      working.current = false;
+      if (mounted.current) {
+        setPending(false);
+        if (!isCurrent()) void load();
+      }
+    }
   };
   return { value, answer, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel, acceptRetest };
 }
