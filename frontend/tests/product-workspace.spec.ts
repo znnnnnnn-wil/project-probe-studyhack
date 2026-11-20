@@ -152,9 +152,12 @@ test("未登录示例不发出写入请求，登录后回到原页面", async ({
     if (r.method() === "POST") writes.push(r.url());
   });
   await page.goto("/");
-  await page.getByLabel("体验回答").fill("我需要核对检查和写入的并发边界。");
-  await page.getByRole("button", { name: "查看复盘角度" }).click();
-  await expect(page.locator(".sample-feedback")).toContainText("固定场景");
+  await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
+  await page.getByRole("button", { name: "开始五轮练习", exact: true }).click();
+  const answer = page.getByLabel("本轮回答");
+  await answer.fill("我需要核对检查和写入的并发边界。");
+  await page.getByRole("button", { name: "保存回答，继续追问" }).click();
+  await expect(answer).toHaveValue("");
   expect(writes).toEqual([]);
   await page.goto("/#/projects/new");
   await page
