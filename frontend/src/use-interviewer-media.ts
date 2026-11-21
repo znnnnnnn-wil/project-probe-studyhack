@@ -24,6 +24,10 @@ export function useQuestionSpeech(ttsEnabled = false) {
     setSpeaking(false);
     setPreparing(false);
   }, [browserSupported]);
+  const finish = useCallback((id: number) => {
+    if (id !== speechId.current) return;
+    stop();
+  }, [stop]);
   const startPlayback = useCallback((id: number) => {
     if (id !== speechId.current) return;
     window.clearTimeout(startTimer.current);
@@ -42,7 +46,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
   const browserSpeak = useCallback(
     (text: string, id: number) => {
       if (!browserSupported) {
-        if (id === speechId.current) stop();
+        finish(id);
         return;
       }
       const utterance = new SpeechSynthesisUtterance(text);
@@ -57,22 +61,16 @@ export function useQuestionSpeech(ttsEnabled = false) {
         ) || voices.find((voice) => voice.lang.startsWith("zh"));
       if (preferred) utterance.voice = preferred;
       utterance.onstart = () => startPlayback(id);
-      const finished = () => {
-        if (id === speechId.current) {
-          window.clearTimeout(startTimer.current);
-          setSpeaking(false);
-          setPreparing(false);
-        }
-      };
+      const finished = () => finish(id);
       utterance.onend = finished;
-      utterance.onerror = finished;
+      utterance.onerror = () => finish(id);
       try {
         window.speechSynthesis.speak(utterance);
       } catch {
-        finished();
+        finish(id);
       }
     },
-    [browserSupported, startPlayback, stop],
+    [browserSupported, startPlayback, finish],
   );
   const cloudSpeak = useCallback(
     async (text: string, target: SpeechTarget, id: number) => {
@@ -190,15 +188,10 @@ export function useQuestionSpeech(ttsEnabled = false) {
           { once: true, signal: controller.signal },
         );
         const finished = () => {
-          if (!active()) return;
-          cancelAnimationFrame(frame);
-          mouthLevel.current = -1;
-          setSpeaking(false);
-          setPreparing(false);
-          window.clearTimeout(startTimer.current);
+          if (active()) finish(id);
         };
         audio.addEventListener("ended", finished, { once: true, signal: controller.signal });
-        audio.addEventListener("error", finished, { once: true, signal: controller.signal });
+        audio.addEventListener("error", () => { if (active()) finish(id); }, { once: true, signal: controller.signal });
         const audioReader = response.body.getReader();
         reader = audioReader;
         void (async () => {
@@ -230,7 +223,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
         }
       }
     },
-    [browserSpeak, startPlayback],
+    [browserSpeak, startPlayback, finish],
   );
   const speak = useCallback(
     (text: string, target?: SpeechTarget) => {
@@ -238,13 +231,11 @@ export function useQuestionSpeech(ttsEnabled = false) {
       if (!text.trim() || !supported) return;
       const id = speechId.current;
       setPreparing(true);
-      startTimer.current = window.setTimeout(() => {
-        if (id === speechId.current) stop();
-      }, 16000);
+      startTimer.current = window.setTimeout(() => finish(id), 16000);
       if (ttsEnabled && target) void cloudSpeak(text, target, id);
       else browserSpeak(text, id);
     },
-    [stop, supported, ttsEnabled, cloudSpeak, browserSpeak],
+    [stop, supported, ttsEnabled, cloudSpeak, browserSpeak, finish],
   );
   useEffect(
     () => () => {
