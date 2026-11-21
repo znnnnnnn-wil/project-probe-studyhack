@@ -51,6 +51,21 @@
   font-size: 12px;
   color: var(--muted);
 }
+.practice-report-loading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.practice-report-loading > svg {
+  flex: none;
+  color: var(--blue);
+}
+.practice-report-loading h3 {
+  margin: 0 0 4px;
+}
+.practice-report-loading p {
+  margin: 0;
+}
 .practice-answer {
   min-width: 0;
 }

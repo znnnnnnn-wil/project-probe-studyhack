@@ -18,8 +18,8 @@ const scoreLabels: Record<ScoreDimension["key"], string> = {
   validation: "验证与边界",
 };
 
-function hasScore(scoring: Report["scoring"]) {
-  return scoring?.dimensions.some(dimension => typeof dimension.score === "number") ?? false;
+function hasPracticeScore(report?: Report) {
+  return report?.scoring?.dimensions?.some(dimension => typeof dimension.score === "number") ?? false;
 }
 
 function PracticeExport({ practice }: { practice: Practice }) {
@@ -73,6 +73,7 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
   const turns = practice.turns ?? [];
   const report = practice.report;
   const scoring = report?.scoring;
+  const hasScore = hasPracticeScore(report);
   const evidenceLinks = (turnIds: string[]) => {
     const indices = turns.flatMap((turn, index) => turnIds.includes(turn.id) ? [index] : []);
     if (!indices.length) return null;
@@ -121,24 +122,24 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
             <h3>本场评分</h3>
             {scoring?.total != null ? (
               <strong className="practice-score-total">{scoring.total}<small> / 100</small></strong>
-            ) : scoring ? (
+            ) : hasScore ? (
               <span>未生成总分</span>
             ) : (
-              <span>{practice.modelMode === "demo" ? "规则演示 · 未评分" : "未评分"}</span>
+              <span>{practice.modelMode === "demo" ? "规则演示 · 未评分" : scoring ? "暂无有效评分" : "未评分"}</span>
             )}
           </div>
           {scoring && <ul className="practice-score-grid">
             {scoring.dimensions.map(dimension => (
               <li key={dimension.key}>
                 <div><strong>{scoreLabels[dimension.key]}</strong>
-                  <span>{dimension.score == null ? "未覆盖" : `${dimension.score} / 25`}</span>
+                  <span>{dimension.score == null ? (hasScore ? "未覆盖" : "待评分") : `${dimension.score} / 25`}</span>
                 </div>
                 <p>{dimension.reason}</p>
                 {evidenceLinks(dimension.turnIds)}
               </li>
             ))}
           </ul>}
-          {scoring && <p className="practice-score-note">AI 根据本场回答评分。</p>}
+          {hasScore && <p className="practice-score-note">AI 根据本场回答评分。</p>}
           {scoreAction}
         </section>
         {report.clearParts.length > 0 && <section className="practice-result-block" aria-label="讲得好的地方">
@@ -189,7 +190,7 @@ export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Act
   </div>;
   if (loading) return readError || <Loading />;
   const allAnswered = (data.turns?.filter(turn => turn.answer).length ?? 0) >= (data.maxTurns || 1);
-  const canScore = data.status === "COMPLETED" && data.modelMode === "live" && data.report?.mode === "live" && !hasScore(data.report.scoring) &&
+  const canScore = data.status === "COMPLETED" && data.modelMode === "live" && data.report?.mode === "live" && !hasPracticeScore(data.report) &&
     data.turns?.some(turn => turn.answer.trim());
   const scoreDisabled = scorePending || busy || loadError || data.retest?.status === "GENERATING";
 
@@ -199,7 +200,7 @@ export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Act
     setScorePending(true);
     try {
       const updated = await api<Practice>(`/projects/${encodeURIComponent(projectId)}/practice/score`, "POST", { roundId });
-      if (updated?.roundId !== roundId || !hasScore(updated.report?.scoring)) throw new Error("评分未生成，请重试。");
+      if (updated?.roundId !== roundId || !hasPracticeScore(updated.report)) throw new Error("评分未生成，请重试。");
       acceptRetest(updated);
       onScored?.();
     } catch (cause) {

@@ -29,6 +29,7 @@ export function useProjectPractice(projectId: string, roundId?: string) {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState(false);
+  const [reportRound, setReportRound] = useState<string>();
   const [cancelling, setCancelling] = useState(false);
   const cancelRequest = useRef(false);
   const [notice, setNotice] = useState("");
@@ -131,6 +132,32 @@ export function useProjectPractice(projectId: string, roundId?: string) {
     return () => window.clearInterval(timer);
   }, [generating, load]);
   const submitted = !!value.turns?.at(-1)?.answer;
+  const finalTurn = (value.turns?.length ?? 0) >= (value.maxTurns || 1);
+  const activeRound = value.roundId;
+  const reportGenerating = !value.report && finalTurn && (pending || value.status === "GENERATING")
+    && (submitted || (!!activeRound && reportRound === activeRound));
+  useEffect(() => {
+    if (roundId || !pending || !finalTurn || submitted || !activeRound) return;
+    const controller = new AbortController();
+    const progressPath = endpoint + "?roundId=" + encodeURIComponent(activeRound);
+    // The last answer is committed before the synchronous POST finishes generating the report.
+    // Only observe its phase here. The POST still owns updating the practice state.
+    let timer = window.setTimeout(checkProgress, 600);
+    async function checkProgress() {
+      const next = await api<Practice>(progressPath, "GET", undefined, controller.signal).catch(() => null);
+      if (controller.signal.aborted) return;
+      if (next && next.roundId === activeRound && next.turns?.at(-1)?.answer &&
+        (next.status === "GENERATING" || next.status === "COMPLETED")) {
+        setReportRound(activeRound);
+        return;
+      }
+      timer = window.setTimeout(checkProgress, 1500);
+    }
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeRound, endpoint, finalTurn, pending, roundId, submitted]);
   useEffect(() => {
     if (roundId) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -236,5 +263,5 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       }
     }
   };
-  return { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel, acceptRetest };
+  return { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, finalTurn, reportGenerating, load, submit, cancel, acceptRetest };
 }
