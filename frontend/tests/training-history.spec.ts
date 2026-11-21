@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { demoProject } from "../src/api";
 
-test("按项目归档每场面试，刷新后仍可从评分跳到原对话", async ({ page }) => {
+test("按项目归档每场面试，旧空评分可补生成并跳到原对话", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   const projectId = "timeflow";
   const completedId = "completed-session";
@@ -22,11 +22,23 @@ test("按项目归档每场面试，刷新后仍可从评分跳到原对话", as
     },
     { ...base, projectId: "another-project", name: "另一个项目", roundId: "other-session", roundNumber: 1, status: "ACTIVE", answeredCount: 0, interviewTopic: "", prioritySuggestion: "" },
   ];
+  const example = {
+    ...base, projectId, name: "校园自习室预约系统", roundId: "example-session",
+    roundNumber: 1, status: "ACTIVE", answeredCount: 0, interviewTopic: "", prioritySuggestion: "",
+    startedAt: base.startedAt + 1000,
+  };
   const turn = {
     id: "request-turn", topic: "请求处理", question: "请介绍语音录入流程。",
     answer: `${firstAnswer}\n${nextAnswer}`,
     exchanges: [{ answer: firstAnswer, reply: followUp }, { answer: nextAnswer, reply: "" }],
   };
+  const scoreDimensions = [
+    { key: "clarity", score: 25, reason: "说明了请求链路。", turnIds: [turn.id] },
+    { key: "ownership", score: 25, reason: "说明了本人职责。", turnIds: [turn.id] },
+    { key: "depth", score: 20, reason: "说明了请求查重。", turnIds: [turn.id] },
+    { key: "validation", score: 15, reason: "给出了验证方法。", turnIds: [turn.id] },
+  ];
+  let scoreGenerated = false;
   let archiveReads = 0;
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -34,16 +46,22 @@ test("按项目归档每场面试，刷新后仍可从评分跳到原对话", as
     if (url.pathname === "/api/config") json = { modelMode: "live" };
     else if (url.pathname === "/api/me") json = { id: "synthetic", username: "训练记录验证" };
     else if (url.pathname === "/api/practice-history") json = history;
+    else if (url.pathname === "/api/examples/practice-history") json = [example];
     else if (url.pathname === "/api/training-projects") json = [];
     else if (url.pathname === "/api/training-page") json = { items: [], total: 0, offset: 0, limit: 20, hasMore: false };
-    else if (url.pathname === `/api/projects/${projectId}/practice`) {
-      archiveReads++;
+    else if ([`/api/projects/${projectId}/practice`, `/api/projects/${projectId}/practice/score`].includes(url.pathname)) {
+      const scoreRequest = url.pathname.endsWith("/score");
+      if (scoreRequest) {
+        expect(route.request().method()).toBe("POST");
+        expect(route.request().postDataJSON()).toEqual({ roundId: completedId });
+        scoreGenerated = true;
+      } else archiveReads++;
       if (url.searchParams.get("roundId") === activeId) {
         json = {
           ...history[0], turns: [{ ...turn, answer: "", exchanges: [{ answer: firstAnswer, reply: followUp }] }],
         };
       } else {
-        expect(url.searchParams.get("roundId")).toBe(completedId);
+        if (!scoreRequest) expect(url.searchParams.get("roundId")).toBe(completedId);
         json = {
           ...history[1], turns: [turn], modelMode: "live",
           report: {
@@ -54,13 +72,10 @@ test("按项目归档每场面试，刷新后仍可从评分跳到原对话", as
               materials: [], turnIds: [turn.id], factIds: [],
             }],
             scoring: {
-              total: 85,
-              dimensions: [
-                { key: "clarity", score: 25, reason: "说明了请求链路。", turnIds: [turn.id] },
-                { key: "ownership", score: 25, reason: "说明了本人职责。", turnIds: [turn.id] },
-                { key: "depth", score: 20, reason: "说明了请求查重。", turnIds: [turn.id] },
-                { key: "validation", score: 15, reason: "给出了验证方法。", turnIds: [turn.id] },
-              ],
+              total: scoreGenerated ? 85 : null,
+              dimensions: scoreGenerated ? scoreDimensions : scoreDimensions.map(({ key }) => ({
+                key, score: null, reason: "本项暂缺可核对的回答依据。", turnIds: [],
+              })),
             },
           },
         };
@@ -69,7 +84,19 @@ test("按项目归档每场面试，刷新后仍可从评分跳到原对话", as
     await route.fulfill({ json });
   });
 
-  await page.goto("/#/history");
+  await page.goto("/#/history/examples");
+  const projects = page.getByRole("region", { name: "项目训练" });
+  const sampleLink = projects.getByRole("link", { name: /校园自习室预约系统/ });
+  const ownLink = projects.getByRole("link", { name: /TimeFlow 开源语音日程助手/ });
+  await expect(sampleLink).toBeVisible();
+  await expect(ownLink).toBeVisible();
+  await expect(projects.getByRole("link").first()).toContainText("示例项目");
+  await sampleLink.click();
+  await expect(page.getByRole("link", { name: "继续训练", exact: true }))
+    .toHaveAttribute("href", `#/experience/${projectId}?from=history`);
+  await page.getByRole("link", { name: "返回训练记录", exact: true }).click();
+  await expect(page).toHaveURL(/#\/history$/);
+  await expect(sampleLink).toBeVisible();
   const projectLink = page.getByRole("link", { name: /TimeFlow 开源语音日程助手/ });
   await expect(projectLink).toHaveCount(1);
   await expect(projectLink).toContainText(/2\s*次/);
@@ -82,20 +109,27 @@ test("按项目归档每场面试，刷新后仍可从评分跳到原对话", as
   expect(archiveReads).toBe(0);
 
   await page.locator(`a[href="#/history/${projectId}/${activeId}"]`).click();
+  const conversation = page.getByRole("listitem", { name: "第 1 题对话", exact: true });
+  await expect(conversation.getByText(firstAnswer, { exact: true })).toBeHidden();
+  await conversation.locator("summary").click();
   await expect(page.getByText(followUp, { exact: true })).toBeVisible();
   await expect(page.getByText(firstAnswer, { exact: true })).toBeVisible();
   await page.goBack();
   await page.locator(`a[href="#/history/${projectId}/${completedId}"]`).click();
   await expect(page.getByRole("heading", { name: "讲得好的地方" })).toBeVisible();
-  await page.reload();
   const scoring = page.getByRole("region", { name: "本场评分" });
+  await expect(scoring.getByText("暂无有效评分", { exact: true })).toBeVisible();
+  await scoring.getByRole("button", { name: "补生成评分" }).click();
+  await expect(scoring.getByText(/85\s*\/\s*100/)).toBeVisible();
+  await page.reload();
   await expect(scoring.getByText("给出了验证方法。", { exact: true })).toBeVisible();
   await expect(scoring.getByText(/85\s*\/\s*100/)).toBeVisible();
+  await expect(conversation.getByText(nextAnswer, { exact: true })).toBeHidden();
   await scoring.getByRole("button", { name: "查看第 1 题对话" }).last().click();
-  await expect(page.locator('[aria-label="第 1 题对话"]')).toBeFocused();
+  await expect(conversation).toBeFocused();
   await expect(page.getByText(firstAnswer, { exact: true })).toBeVisible();
   await expect(page.getByText(followUp, { exact: true })).toBeVisible();
-  await expect(page.locator('[aria-label="第 1 题对话"]').getByText(nextAnswer, { exact: true })).toBeVisible();
+  await expect(conversation.getByText(nextAnswer, { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
 
@@ -122,7 +156,7 @@ test("训练记录分页、服务端筛选与展开后读取原问答", async ({
       json = { modelMode: "demo" };
     else if (url.pathname === "/api/me")
       json = { id: "synthetic", username: "分页回归" };
-    else if (url.pathname === "/api/practice-history")
+    else if (["/api/practice-history", "/api/examples/practice-history"].includes(url.pathname))
       json = [];
     else if (url.pathname === "/api/training-projects")
       json = [

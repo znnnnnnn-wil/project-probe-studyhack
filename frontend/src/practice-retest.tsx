@@ -9,9 +9,9 @@ import "./practice-retest.css";
 type Target = { index: number; finding: Finding; evidence: Finding["evidence"][number] };
 
 export function PracticeRetest({
-  projectId, roundId, report, retest, disabled, onChange, reload,
+  endpoint, roundId, report, retest, disabled, onChange, reload,
 }: {
-  projectId: string;
+  endpoint: string;
   roundId?: string;
   report: Report;
   retest?: Retest;
@@ -38,7 +38,7 @@ export function PracticeRetest({
     setPending(true);
     setError("");
     try {
-      onChange(await api<Practice>(`/projects/${projectId}/practice/retest`, "POST", {
+      onChange(await api<Practice>(endpoint + "/retest", "POST", {
         findingIndex: current.index,
         turnId: current.evidence.turnId,
         answer: retest?.answer ?? answer,

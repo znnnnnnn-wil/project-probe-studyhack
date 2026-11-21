@@ -3,7 +3,7 @@ import { api } from "./api";
 import { Button } from "./ui";
 import type { Actions } from "./ui";
 
-export function PracticeReview({ projectId, run, busy }: Actions & { projectId: string }) {
+export function PracticeReview({ projectId, endpoint, run, busy }: Actions & { projectId: string; endpoint: string }) {
   const [score, setScore] = useState(0), [again, setAgain] = useState("");
   const [detail, setDetail] = useState("");
   const [saved, setSaved] = useState(!!sessionStorage.getItem("practice-review:" + projectId));
@@ -16,7 +16,7 @@ export function PracticeReview({ projectId, run, busy }: Actions & { projectId: 
         <button key={value} type="button" aria-pressed={again === value} disabled={busy} onClick={() => setAgain(value)}>{value}</button>)}</div></div>
       <label>最卡住的一步（可选）<textarea rows={2} maxLength={500} value={detail} onChange={e => setDetail(e.target.value)} /></label>
       <Button secondary disabled={busy || !score || !again} onClick={() => run(async () => {
-        await api("/feedback", "POST", { kind: "GENERAL", requestKey: "trial-review-" + projectId,
+        await api(endpoint, "POST", { kind: "GENERAL", requestKey: "trial-review-" + projectId,
           detail: `练习反馈\n项目：${projectId}\n帮助程度：${score}/5\n再次使用：${again}\n卡点：${detail.trim() || "未填写"}` });
         sessionStorage.setItem("practice-review:" + projectId, "saved"); setSaved(true);
       })}>保存练习反馈</Button>

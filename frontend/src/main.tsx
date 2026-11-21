@@ -104,16 +104,21 @@ function App() {
   }, []);
   const props = { run, busy };
   const [route, search] = path.split("?", 2);
-  const [, nav, routeId, historyRoundId] = route.split("/");
+  const [, nav, routeId, historyRoundId, exampleRoundId] = route.split("/");
   const projectQuery = new URLSearchParams(search);
   const projectRoundId = nav === "projects" && routeId && routeId !== "new" ? projectQuery.get("roundId") : null;
   const publicHome = path === "/" && !user;
-  const publicPage = nav === "experience" || publicHome;
+  const exampleHistory = nav === "history" && routeId === "examples";
+  const historyProjectId = exampleHistory ? historyRoundId : routeId;
+  const historyOverview = nav === "history" && !historyProjectId;
+  const publicHistory = exampleHistory || historyOverview;
+  const publicPage = nav === "experience" || publicHistory || publicHome;
   const projectsActive = nav === "projects" || (!!user && !nav);
   useEffect(() => {
     if (
       ready &&
       !user &&
+      !publicHistory &&
       path !== "/" &&
       path !== "/login" &&
       /^\/(projects|trainings|report|history)(\/|$)/.test(
@@ -122,7 +127,7 @@ function App() {
     ) {
       sessionStorage.setItem("auth:return", path);
     }
-  }, [path, ready, user]);
+  }, [publicHistory, path, ready, user]);
   useEffect(() => {
     if (user && projectRoundId)
       window.location.replace(`#/history/${routeId}/${encodeURIComponent(projectRoundId)}`);
@@ -207,7 +212,11 @@ function App() {
       <main className={publicHome ? undefined : "app-main"}>
         <PageBoundary key={`${user?.id || "guest"}:${path}`}>
           <Suspense fallback={<Loading />}>
-            {nav === "experience" ? <Experience key={path} /> : nav === "privacy" ? <PrivacyInfo /> : publicHome ? (
+            {nav === "experience" ? <Experience key={path} />
+            : publicHistory ? (
+              historyOverview && !ready ? <Loading /> :
+                <History example={exampleHistory} signedIn={!!user} projectId={historyProjectId} roundId={exampleRoundId} {...props} />
+            ) : nav === "privacy" ? <PrivacyInfo /> : publicHome ? (
               <Home
                 backendReady={!!config}
                 onStart={() => {
@@ -248,7 +257,7 @@ function App() {
             ) : nav === "report" ? (
               <ReportPage key={path} id={routeId} {...props} />
             ) : nav === "history" ? (
-              <History projectId={routeId} roundId={historyRoundId} {...props} />
+              <History signedIn projectId={routeId} roundId={historyRoundId} {...props} />
             ) : (
               <Empty
                 title="页面不存在"
