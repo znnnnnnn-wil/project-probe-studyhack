@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { mockHandsFree, mockPracticeVoice, type TestVoiceWindow } from "./practice-voice-fixture";
+import type { Practice } from "../src/use-project-practice";
 
 test("面试完成后进入本场报告，项目材料单独编辑，复练后仍可回看", async ({ page }) => {
   const firstAnswer = "我负责接口与数据库约束：同一座位时段只写入一条预约，冲突回滚，并发尚未验证。";
@@ -38,7 +39,14 @@ test("面试完成后进入本场报告，项目材料单独编辑，复练后�
   const firstRoundPath = `/#/history/${projectId}/${firstRound.roundId}`;
   await expect(page).toHaveURL(new URL(firstRoundPath, page.url()).href);
   const transcript = archive.getByRole("region", { name: "完整对话" });
-  await expect(transcript.getByText(firstAnswer, { exact: true })).toBeVisible();
+  const firstDialogue = transcript.getByRole("listitem", { name: "第 1 题对话", exact: true });
+  const firstToggle = firstDialogue.locator("summary");
+  const firstMessage = firstDialogue.getByText(firstAnswer, { exact: true });
+  await expect(firstMessage).toBeHidden();
+  await firstToggle.click();
+  await expect(firstMessage).toBeVisible();
+  await firstToggle.press("Enter");
+  await expect(firstMessage).toBeHidden();
   await expect(page.locator("#project-materials")).toHaveCount(0);
   await expect(page.getByText("把刚才讲清楚的内容，带到下一轮", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "预览回答补充到材料" })).toHaveCount(0);
@@ -72,7 +80,10 @@ test("面试完成后进入本场报告，项目材料单独编辑，复练后�
   expect(secondRound.turns[0].question).toContain("数据库唯一约束");
   await page.goto(`/#/projects/${projectId}?roundId=${firstRound.roundId}`);
   await expect(page).toHaveURL(new URL(firstRoundPath, page.url()).href);
-  await expect(transcript.getByText(firstAnswer, { exact: true })).toBeVisible();
+  await expect(firstToggle).toBeVisible();
+  await expect(firstMessage).toBeHidden();
+  await firstToggle.click();
+  await expect(firstMessage).toBeVisible();
   const projectHistory = `/#/history/${projectId}`;
   await page.goto(projectHistory);
   await page.getByRole("link", { name: "继续训练", exact: true }).click();
@@ -552,4 +563,353 @@ for (const width of [1440, 390]) test(`语音正常提交隐藏草稿卡片，�
   await expect(draft).toHaveCount(0);
   expect(submissions).toBe(2);
   expect(await page.evaluate(project => sessionStorage.getItem("practice-draft:" + project), id)).toBeNull();
+});
+
+for (const width of [1440, 390]) for (const ending of ["played", "muted", "failed"] as const) test(`不会后留在本题答疑，确认学会才推进或生成报告 ${width} ${ending}`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  // Repeated room navigation is tested independently of the WebGL renderer.
+  await page.route(/\/src\/interviewer-avatar\.tsx(?:\?|$)/, route => route.fulfill({
+    contentType: "text/javascript",
+    body: `import React from '/node_modules/.vite/deps/react.js';
+      export function InterviewerAvatar() {
+        return React.createElement('img', { src: '/models/interviewer-v2-portrait.webp', alt: '虚拟面试官陈老师', style: { width: '100%', height: '100%', objectFit: 'cover' } });
+      }`,
+  }));
+  const id = "88888888-8888-4888-8888-888888888888";
+  const path = `/api/projects/${id}/practice`;
+  const interviewUrl = `/#/projects/${id}?interview=1`;
+  const first = { id: "teach-first", topic: "消息确认", question: "Worker 应先提交数据库事务还是确认消息？", answer: "" };
+  const second = { id: "teach-second", topic: "重试", question: "如何设计消费失败后的重试？", answer: "" };
+  const steps = [
+    { turnId: first.id, exchangeCount: 0, answer: "我不会，请给我讲解", reply: "应先提交数据库事务，再确认消息；确认失败可能重复投递，因此需要幂等处理。" },
+    { turnId: first.id, exchangeCount: 1, answer: "没听懂，为什么不能先确认消息？", reply: "先确认后进程崩溃，未提交的事务会回滚，消息却不再投递。先提交再确认可避免丢失。" },
+    { turnId: first.id, exchangeCount: 2, answer: "我学会了", reply: "已确认学会，我们继续下一题。" },
+    { turnId: second.id, exchangeCount: 0, answer: "直接告诉我答案吧", reply: "重试需要限制次数并采用退避，最终失败进入人工处理；仍需幂等以应对重复投递。" },
+    { turnId: second.id, exchangeCount: 1, answer: "我没懂，退避是什么意思？", reply: "退避就是失败后逐渐延长等待时间，避免持续重试让下游压力更大。" },
+    { turnId: second.id, exchangeCount: 2, answer: "我学会了", reply: "已确认学会，本轮结束，正在生成报告。" },
+  ];
+  const active: Practice = { status: "ACTIVE", roundId: "teaching-round", maxTurns: 2, modelMode: "demo", turns: [first] };
+  let state = active;
+  let submissions = 0, uploads = 0, archiveReads = 0;
+  const ttsCalls: unknown[] = [];
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.route("**/api/**", route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const current = state.turns!.at(-1)!;
+    const target = { turnId: current.id, exchangeCount: current.exchanges?.length ?? 0 };
+    if (url.pathname === path + "/transcribe") {
+      expect(request.method()).toBe("POST");
+      expect(uploads).toBe(submissions);
+      const step = steps[uploads++];
+      expect(target).toEqual({ turnId: step.turnId, exchangeCount: step.exchangeCount });
+      expect(current.answer).toBe("");
+      const form = request.postDataBuffer()!.toString("latin1");
+      expect(form).toContain(`name="turnId"\r\n\r\n${step.turnId}\r\n`);
+      expect(form).toContain(`name="exchangeCount"\r\n\r\n${step.exchangeCount}\r\n`);
+      expect(form).toContain("RIFF");
+      return route.fulfill({ json: { text: step.answer } });
+    }
+    if (url.pathname === path && request.method() === "POST") {
+      const { reply, ...step } = steps[submissions++];
+      expect(request.postDataJSON()).toEqual({ ...step, dialogue: true });
+      expect(target).toEqual({ turnId: step.turnId, exchangeCount: step.exchangeCount });
+      expect(current.answer).toBe("");
+      const exchanges = [...(current.exchanges ?? []), { answer: step.answer, reply }];
+      const learned = step.answer === "我学会了";
+      const updated = { ...current, exchanges, explanation: learned ? current.explanation : reply,
+        answer: learned ? exchanges[0].answer : "" };
+      state = { ...state, turns: [...state.turns!.slice(0, -1), updated] };
+      if (learned && current.id === first.id) state.turns!.push(second);
+      else if (learned) state = { ...state, status: "COMPLETED",
+        report: { mode: "demo", clearParts: [], findings: [], retestTopics: [] } };
+      return route.fulfill({ json: state });
+    }
+    if (url.pathname === path + "/tts") {
+      expect(request.method()).toBe("POST");
+      expect(state.status).toBe("ACTIVE");
+      expect(request.postDataJSON()).toEqual(target);
+      ttsCalls.push(target);
+      return route.fulfill({ status: 503, json: { message: "合成云端播报故障" } });
+    }
+    if (url.pathname === path && url.searchParams.has("roundId")) {
+      expect(state.status).toBe("COMPLETED");
+      expect(url.searchParams.get("roundId")).toBe(active.roundId);
+      archiveReads++;
+    }
+    expect(request.method()).toBe("GET");
+    const responses: Record<string, unknown> = {
+      "/api/config": { speechEnabled: true, ttsEnabled: ending === "failed" },
+      "/api/me": { id: "synthetic", username: "讲解验证" },
+      [`/api/projects/${id}`]: { id, name: "消息消费项目" },
+      "/api/projects": [],
+      "/api/training-overview": { items: [] },
+      "/api/practice-history": [],
+      [path]: state,
+    };
+    return route.fulfill({ json: responses[url.pathname] ?? null });
+  });
+  const voice = await mockHandsFree(page);
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const teaching = room.getByRole("status").filter({ hasText: "正在讲解本题" });
+  const dialogue = room.getByRole("region", { name: "本题对话", exact: true });
+  const replay = room.getByRole("button", { name: "重新播报本题", exact: true });
+  const playing = () => expect.poll(async () => (await voice.playback()).playing);
+  const speak = async () => {
+    await expect.poll(voice.micState).toEqual(["live", true]);
+    await voice.beginSpeech();
+    await voice.endSpeech();
+  };
+  const finishPlayback = async (failed = false) => {
+    await page.evaluate(fail => {
+      const utterance = (window as TestVoiceWindow).testPlayback;
+      if (!utterance) throw new Error("Expected a playing utterance");
+      if (fail) utterance.onerror?.(new Event("error") as SpeechSynthesisErrorEvent);
+      else utterance.onend?.(new Event("end") as SpeechSynthesisEvent);
+    }, failed);
+    await playing().toBeNull();
+  };
+  const lateEnds = () => page.evaluate(async () => {
+    const interrupted = (window as TestVoiceWindow).testInterrupted;
+    if (!interrupted.length) throw new Error("Expected an ended or interrupted utterance");
+    interrupted.forEach(utterance => utterance.onend?.(new Event("end") as SpeechSynthesisEvent));
+    await new Promise<void>(resolve => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  });
+  const stillTeaching = async (index: number, count: number) => {
+    const question = [first, second][index];
+    await expect(page).toHaveURL(/interview=1$/);
+    await expect(room.getByRole("heading", { name: question.question, exact: true })).toBeVisible();
+    await expect(room.getByText(`第 ${index + 1} / 2 题`, { exact: true })).toBeVisible();
+    await expect(teaching).toContainText("没听懂可以继续问。学会后请说“我学会了”");
+    await expect(teaching).toContainText(index ? "确认后生成本场报告" : "确认后再继续下一题");
+    await expect(dialogue.getByRole("listitem")).toHaveCount(count);
+    await expect(room.getByRole("region", { name: "未发送的回答" })).toHaveCount(0);
+    await expect(room.getByRole("region", { name: "上一题讲解" })).toHaveCount(0);
+    await expect(room.getByRole("button", { name: "查看本场报告", exact: true })).toHaveCount(0);
+    expect(state.status).toBe("ACTIVE");
+    expect(state.report).toBeUndefined();
+    expect(state.turns).toHaveLength(index + 1);
+    expect(state.turns!.at(-1)).toMatchObject({ id: question.id, question: question.question, answer: "" });
+    expect(state.turns!.at(-1)!.exchanges).toHaveLength(count);
+    expect(submissions).toBe(index * 3 + count);
+    expect(uploads).toBe(submissions);
+    expect(archiveReads).toBe(0);
+  };
+  await page.goto(interviewUrl);
+  await room.getByRole("button", { name: "同意并进入语音面试", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as TestVoiceWindow).testVadArmed), { timeout: 15000 }).toBe(true);
+  await playing().toBe(first.question);
+  for (const index of [0, 1]) {
+    const initialReply = steps[index * 3].reply;
+    const followUp = steps[index * 3 + 1].reply;
+    await speak();
+    await expect(dialogue).toContainText(initialReply);
+    await playing().toBe(initialReply);
+    await stillTeaching(index, 1);
+    await expect(room.locator(".practice-question")).not.toContainText(initialReply);
+    if (ending === "muted") {
+      await room.getByRole("button", { name: "关闭面试官声音", exact: true }).click();
+      await playing().toBeNull();
+    } else await finishPlayback(ending === "failed");
+    await lateEnds();
+    await stillTeaching(index, 1);
+    const broadcasts = await voice.broadcasts();
+    await speak();
+    await expect(dialogue).toContainText(followUp);
+    await stillTeaching(index, 2);
+    await expect(dialogue).toContainText(initialReply);
+    if (ending === "muted") {
+      expect(await voice.broadcasts()).toEqual(broadcasts);
+      await room.getByRole("button", { name: "开启面试官声音", exact: true }).click();
+    }
+    await playing().toBe(followUp);
+    await finishPlayback(ending === "failed");
+    await stillTeaching(index, 2);
+    await expect(replay).toBeEnabled();
+    await replay.click();
+    await playing().toBe(followUp);
+    await lateEnds();
+    await playing().toBe(followUp);
+    await stillTeaching(index, 2);
+    await finishPlayback();
+    await room.getByRole("button", { name: "暂停语音面试", exact: true }).click();
+    await expect(room.getByText("麦克风已暂停", { exact: true })).toBeVisible();
+    await expect.poll(voice.micState).toEqual(["ended", false]);
+    await stillTeaching(index, 2);
+    await room.getByRole("button", { name: "继续语音面试", exact: true }).click();
+    await expect.poll(voice.micState).toEqual(["live", true]);
+    const beforeLeaving = await voice.broadcasts();
+    if (width === 390) await page.reload();
+    else {
+      await room.getByRole("button", { name: "返回项目列表", exact: true }).click();
+      await expect(page).toHaveURL(/#\/projects$/);
+      await page.goto(interviewUrl);
+    }
+    await stillTeaching(index, 2);
+    expect(await voice.broadcasts()).toEqual(width === 390 ? [] : beforeLeaving);
+    await playing().toBeNull();
+    if (index === 0) await page.screenshot({ path: testInfo.outputPath(`learning-${width}.png`), fullPage: true });
+    await room.getByRole("button", { name: "同意并进入语音面试", exact: true }).click();
+    await playing().toBe(followUp);
+    const beforeConfirm = await voice.broadcasts();
+    const ttsBeforeConfirm = ttsCalls.length;
+    // Register before confirmation: the report request can finish during navigation.
+    const archiveLoaded = index === 1 ? page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET" && url.pathname === path && url.searchParams.get("roundId") === active.roundId;
+    }) : null;
+    await speak();
+    if (index === 0) {
+      await expect(room.getByRole("heading", { name: second.question, exact: true })).toBeVisible();
+      await expect(room.getByText("第 2 / 2 题", { exact: true })).toBeVisible();
+      await expect(teaching).toHaveCount(0);
+      await expect(room.getByRole("region", { name: "上一题讲解" })).toHaveCount(0);
+      await playing().toBe(second.question);
+      expect(await voice.broadcasts()).toEqual([...beforeConfirm, { text: second.question, micReady: true }]);
+      expect(state.turns![0].answer).toBe(steps[0].answer);
+      expect(state.turns![1].answer).toBe("");
+    } else {
+      await expect(page).toHaveURL(new RegExp(`#/history/${id}/teaching-round$`));
+      expect((await archiveLoaded!).ok()).toBeTruthy();
+      const transcript = page.getByRole("region", { name: "完整对话", exact: true });
+      for (const turnIndex of [0, 1]) {
+        const conversation = transcript.getByRole("listitem", { name: `第 ${turnIndex + 1} 题对话`, exact: true });
+        await expect(conversation.getByText(steps[turnIndex * 3].answer, { exact: true })).toBeHidden();
+        await conversation.locator("summary").click();
+        for (const { answer, reply } of steps.slice(turnIndex * 3, turnIndex * 3 + 3)) {
+          await expect(conversation.getByText(answer, { exact: true })).toBeVisible();
+          await expect(conversation.getByText(reply, { exact: true })).toBeVisible();
+        }
+        expect(state.turns![turnIndex].answer).toBe(steps[turnIndex * 3].answer);
+      }
+      await lateEnds();
+      await expect(page).toHaveURL(new RegExp(`#/history/${id}/teaching-round$`));
+      await playing().toBeNull();
+      expect(await voice.broadcasts()).toEqual(beforeConfirm);
+      expect(ttsCalls).toHaveLength(ttsBeforeConfirm);
+      expect(state.status).toBe("COMPLETED");
+      expect([submissions, uploads, archiveReads]).toEqual([6, 6, 1]);
+    }
+  }
+  expect(errors).toEqual([]);
+});
+
+for (const confirmation of [
+  "学会了，你下一题吧。", "我学会了，继续吧。", "OK，我学会了下一题吧。", "理解了，已经全部都理解了。",
+]) test(`隔离 demo 真实 API：确认“${confirmation}”后报告保存全部答疑`, async ({ page }) => {
+  const answers = ["我不会，请给我讲解", "我没听懂，再解释一下", "继续吧", "我还没学会，继续讲吧", "我学会了？继续吧"];
+  let recognized = answers[0];
+  const voice = await mockPracticeVoice(page, () => recognized);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const origin = new URL(test.info().project.use.baseURL!).origin;
+  const post = async (path: string, data: unknown) => {
+    const response = await page.request.post("/api" + path, { headers: { Origin: origin }, data });
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  await post("/auth/register", { username: "teaching-" + crypto.randomUUID(), password: "synthetic-practice-password" });
+  const project = await post("/projects", { name: "讲解答疑闭环项目", background: "我实现预约接口和数据库唯一约束。" });
+  const path = `/api/projects/${project.id}/practice`;
+  const readPractice = async (): Promise<Practice> => {
+    const response = await page.request.get(path);
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  const submissions: unknown[] = [];
+  const uploads: string[] = [];
+  page.on("request", request => {
+    if (request.method() !== "POST") return;
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === path) submissions.push(request.postDataJSON());
+    if (pathname === path + "/transcribe") uploads.push(request.postDataBuffer()!.toString("latin1"));
+  });
+  await page.goto(`/#/projects/${project.id}?interview=1`);
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const teaching = room.getByRole("status").filter({ hasText: "正在讲解本题" });
+  const started = page.waitForResponse(response => new URL(response.url()).pathname === path && response.request().method() === "POST");
+  await room.getByRole("button", { name: "同意并开始语音面试", exact: true }).click();
+  expect((await started).ok()).toBeTruthy();
+  await expect(room.getByText("第 1 / 1 题", { exact: true })).toBeVisible();
+  const active = await readPractice();
+  expect(active).toMatchObject({ status: "ACTIVE", modelMode: "demo", maxTurns: 1 });
+  expect(active.turns).toHaveLength(1);
+  const initial = active.turns![0];
+  expect(initial.answer).toBe("");
+  expect(initial.exchanges ?? []).toEqual([]);
+  for (const [index, answer] of answers.entries()) {
+    recognized = answer;
+    await voice.speak();
+    await expect.poll(async () => (await readPractice()).turns?.[0].exchanges?.length).toBe(index + 1);
+    const current = await readPractice();
+    expect(current).toMatchObject({ status: "ACTIVE", roundId: active.roundId });
+    expect(current.report).toBeFalsy();
+    expect(current.turns).toHaveLength(1);
+    const turn = current.turns![0];
+    expect(turn).toMatchObject({ id: initial.id, question: initial.question, answer: "" });
+    expect(turn.explanation).toBeTruthy();
+    const reply = turn.exchanges!.at(-1)!.reply;
+    expect(reply).toBeTruthy();
+    await expect(room.getByRole("region", { name: "本题对话", exact: true })).toContainText(reply);
+    await expect(teaching).toContainText("学会后请说“我学会了”，确认后生成本场报告");
+    await expect.poll(() => page.evaluate(() => (window as TestVoiceWindow).testPlayback?.text)).toBe(reply);
+    await page.evaluate(() => {
+      const utterance = (window as TestVoiceWindow).testPlayback!;
+      utterance.onend?.(new Event("end") as SpeechSynthesisEvent);
+      utterance.onend?.(new Event("end") as SpeechSynthesisEvent);
+    });
+    await expect(room.getByRole("heading", { name: initial.question, exact: true })).toBeVisible();
+    await expect(room.getByText("第 1 / 1 题", { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/interview=1$/);
+    expect((await readPractice()).turns).toEqual(current.turns);
+  }
+  const beforeReload = await readPractice();
+  await page.reload();
+  await expect(teaching).toBeVisible();
+  await expect(room.getByRole("heading", { name: initial.question, exact: true })).toBeVisible();
+  expect((await readPractice()).turns).toEqual(beforeReload.turns);
+  await room.getByRole("button", { name: "同意并进入语音面试", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as TestVoiceWindow).testPlayback?.text))
+    .toBe(beforeReload.turns![0].exchanges!.at(-1)!.reply);
+  const beforeConfirm = await page.evaluate(() => (window as TestVoiceWindow).testBroadcasts);
+  // Subscribe before sending the confirmation, not after the report route loads.
+  const archiveLoaded = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return response.request().method() === "GET" && url.pathname === path && url.searchParams.get("roundId") === active.roundId;
+  });
+  recognized = confirmation;
+  await voice.speak();
+  await expect(page).toHaveURL(new RegExp(`#/history/${project.id}/${active.roundId}$`));
+  const archivedResponse = await archiveLoaded;
+  expect(archivedResponse.ok()).toBeTruthy();
+  const archived: Practice = await archivedResponse.json();
+  expect(archived.status).toBe("COMPLETED");
+  expect(archived.report).toBeTruthy();
+  expect(archived.turns).toHaveLength(1);
+  const completed = archived.turns![0];
+  expect(completed.id).toBe(initial.id);
+  expect(completed.answer).toBe(answers[0]);
+  expect(completed.exchanges!.map(exchange => exchange.answer)).toEqual([...answers, recognized]);
+  expect(completed.exchanges!.slice(0, answers.length)).toEqual(beforeReload.turns![0].exchanges);
+  const transcript = page.getByRole("region", { name: "完整对话", exact: true });
+  await transcript.getByRole("listitem", { name: "第 1 题对话", exact: true }).locator("summary").click();
+  for (const { answer, reply } of completed.exchanges!) {
+    await expect(transcript).toContainText(answer);
+    if (reply) await expect(transcript).toContainText(reply);
+  }
+  expect((await readPractice()).turns).toEqual(archived.turns);
+  expect(submissions).toEqual([{}, ...[...answers, recognized].map((answer, exchangeCount) => ({
+    turnId: initial.id, exchangeCount, answer, dialogue: true,
+  }))]);
+  expect(uploads).toHaveLength(answers.length + 1);
+  uploads.forEach((form, exchangeCount) => {
+    expect(form).toContain(`name="turnId"\r\n\r\n${initial.id}\r\n`);
+    expect(form).toContain(`name="exchangeCount"\r\n\r\n${exchangeCount}\r\n`);
+  });
+  expect(await page.evaluate(() => (window as TestVoiceWindow).testBroadcasts)).toEqual(beforeConfirm);
+  expect(await page.evaluate(() => (window as TestVoiceWindow).testPlayback?.text ?? null)).toBeNull();
+  expect(errors).toEqual([]);
 });

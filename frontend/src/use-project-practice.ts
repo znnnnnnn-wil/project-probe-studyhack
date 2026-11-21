@@ -8,7 +8,10 @@ export type Retest = {
   status: "GENERATING" | "FAILED" | "COMPLETED";
   report?: Report;
 };
-type PracticeTurn = Turn & { exchanges?: { answer: string; reply: string }[] };
+type PracticeTurn = Turn & {
+  explanation?: string;
+  exchanges?: { answer: string; reply: string }[];
+};
 export type Practice = {
   status: string;
   roundId?: string;

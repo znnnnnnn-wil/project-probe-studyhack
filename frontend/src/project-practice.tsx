@@ -265,8 +265,12 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
             </>}
           </section>
           </>
-        ) : turn && <div className="practice-question"><span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
+        ) : turn && <div className="practice-question">
+          <span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
           <h3>{turn.question}</h3>
+          {turn.explanation && !turn.answer && <p className="practice-footnote" role="status">
+            正在讲解本题，没听懂可以继续问。学会后请说“我学会了”，{value.turns?.length === value.maxTurns ? "确认后生成本场报告。" : "确认后再继续下一题。"}
+          </p>}
           {value.interviewTopic && <p>本轮主题：{value.interviewTopic}</p>}
           <p>结合你实际负责的部分回答；没有做过或尚未验证的内容，可以直接说明。</p>
           {value.modelMode && <small>{value.modelMode === "demo" ? "规则演示，非AI评估" : "真实AI反馈，技术建议仍需核对"}</small>}
