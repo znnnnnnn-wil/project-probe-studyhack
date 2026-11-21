@@ -106,6 +106,7 @@ class PracticeRetest {
       });
     } catch (Exception e) {
       store.db.update("UPDATE project_practice_rounds SET lease_until=0,lease_token=NULL WHERE user_id=? AND round_id=? AND lease_token=?", user, roundId, token);
+      if (e instanceof ModelContext.TooLarge limit) throw limit;
       throw error(503, "补答已保存，复测报告生成失败，请重试");
     }
     return practice.get(user, projectId, roundId);

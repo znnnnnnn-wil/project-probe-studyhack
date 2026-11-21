@@ -477,7 +477,7 @@ public class TrainingService {
             "FIRST_QUESTION",
             "FIRST_DEEP_QUESTION"
           ).contains(str(saved, "operation"));
-          String savedMessage = first
+          String savedMessage = e instanceof ModelContext.TooLarge limit ? limit.getReason() : first
             ? "首题生成失败，训练记录已保存，可以重试。"
             : "生成失败，回答已保存，可以重试。";
           saved.put("error", savedMessage);
@@ -486,6 +486,7 @@ public class TrainingService {
         }
         return null;
       });
+      if (e instanceof ModelContext.TooLarge limit) throw limit;
       throw error(503, "生成失败，进度已保存，请重试。");
     }
   }

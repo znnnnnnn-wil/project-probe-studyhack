@@ -2,8 +2,12 @@ package com.projectprobe;
 
 import static com.projectprobe.Store.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.web.server.ResponseStatusException;
@@ -155,5 +159,107 @@ class CompetitionPracticeTest {
       "decision", "ADVANCE", "reply", "说清楚了。", "evidence", "如何处理重复请求"), previous, answer));
     assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parse(Map.of(
       "decision", "ADVANCE", "reply", "说清楚了。", "evidence", "请求会带唯一的幂等键"), previous, "你好"));
+  }
+  ModelService dialogueModel() {
+    return spy(new ModelService(s, "live", "https://model.example/v1", "synthetic-key", "test", "test"));
+  }
+
+  @Test void dialogueReceivesEarlierTopicsWithoutBorrowingTheirEvidence() {
+    String answer = "我会从接口请求开始说明";
+    var model = dialogueModel();
+    var previous = Map.<String, Object>of("id", "before", "question", "如何去重？", "answer", "请求键在服务端持久化",
+      "exchanges", List.of(Map.of("answer", "请求键在服务端持久化", "reply", "旧讲解")));
+    var exchange = Map.<String, Object>of("answer", "超时会先查询状态", "reply", "然后怎样处理？");
+    var current = Map.<String, Object>of("id", "now", "question", "怎样处理超时？", "exchanges", List.of(exchange));
+    var future = Map.<String, Object>of("id", "future", "answer", "不应被传入的后续回答");
+    var context = Map.<String, Object>of("project", Map.of("name", "合成项目"), "interviewTopic", "幂等",
+      "turns", List.of(previous, current, future), "historyTurns", List.of(Map.of("answer", "另一场回答")));
+    String saved = s.encode(context);
+    doReturn(Map.of("decision", "FOLLOW_UP", "reply", "假设请求仍在处理，先查询已有状态。"))
+      .when(model).call(anyString(), any());
+    PracticeDialogue.decide(model, context, current, answer);
+    var captor = org.mockito.ArgumentCaptor.forClass(Object.class);
+    verify(model).call(anyString(), captor.capture());
+    var input = PracticeRetest.object(captor.getValue());
+    assertEquals(List.of(Map.of("id", "before", "question", "如何去重？", "answer", "请求键在服务端持久化")), input.get("completedTurns"));
+    assertEquals(List.of(exchange), input.get("exchanges"));
+    assertEquals(false, input.get("exchangesTruncated"));
+    assertEquals(answer, input.get("latestAnswer"));
+    assertEquals("幂等", input.get("interviewTopic"));
+    assertFalse(input.containsKey("historyTurns"));
+    assertEquals(saved, s.encode(context));
+
+    if (!answer.equals("不会")) {
+      doReturn(Map.of("decision", "ADVANCE", "reply", "好的", "evidence", "请求键在服务端持久化"))
+        .when(model).call(anyString(), any());
+      assertThrows(ResponseStatusException.class, () -> PracticeDialogue.decide(model, context, current, answer));
+    }
+  }
+
+  @Test void longDialogueRetainsRecentCompleteExchangesAndTheEntireLatestAnswer() {
+    var model = dialogueModel();
+    var exchanges = new ArrayList<Map<String, Object>>();
+    for (int i = 0; i < 6; i++) exchanges.add(Map.of("answer", "答".repeat(3000), "reply", "追问" + i, "internal", "不发送"));
+    var turn = Map.<String, Object>of("id", "current", "question", "如何验证？", "exchanges", exchanges);
+    String latest = "最新解释".repeat(750);
+    doReturn(Map.of("decision", "FOLLOW_UP", "reply", "请说明预期结果。"))
+      .when(model).call(anyString(), any());
+    PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, latest);
+    var captor = org.mockito.ArgumentCaptor.forClass(Object.class);
+    verify(model).call(anyString(), captor.capture());
+    var input = PracticeRetest.object(captor.getValue());
+    var recent = list(new LinkedHashMap<>(input), "exchanges");
+    assertEquals(3, recent.size());
+    assertEquals("追问3", recent.get(0).get("reply"));
+    assertEquals("追问5", recent.get(2).get("reply"));
+    assertEquals(3000, str(recent.get(0), "answer").length());
+    assertFalse(recent.get(0).containsKey("internal"));
+    assertEquals(true, input.get("exchangesTruncated"));
+    assertEquals(latest, input.get("latestAnswer"));
+    assertEquals(6, exchanges.size());
+    assertTrue(exchanges.get(0).containsKey("internal"));
+  }
+
+  @Test void contextLimitKeepsSavedAnswerAndReleasesTheGenerationLease() {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("请说明验证方法。", "验证"))
+      .when(model).firstDeepQuestion(any());
+    doThrow(new ModelContext.TooLarge()).when(model).report(any());
+    var state = service.run(f[0], f[1], Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    assertEquals(413, assertThrows(ModelContext.TooLarge.class, () -> service.run(f[0], f[1],
+      Map.of("turnId", turnId, "answer", "已保存的原始回答"))).getStatusCode().value());
+    var failed = service.get(f[0], f[1]);
+    assertEquals("FAILED", failed.get("status"));
+    assertEquals(0L, failed.get("leaseUntil"));
+    assertEquals("已保存的原始回答", list(failed, "turns").get(0).get("answer"));
+    verify(model, times(1)).report(any());
+  }
+
+  @Test void retestContextLimitKeepsTheSupplementAndOriginalReport() {
+    var f = fixture();
+    var service = new ProjectPractice(s, projects, practice.model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    var state = service.run(f[0], f[1], Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    state = service.run(f[0], f[1], Map.of("turnId", turnId, "answer", "原始回答"));
+    var gateway = spy(practice.model);
+    doThrow(new ModelContext.TooLarge()).when(gateway).report(any());
+    var retesting = new PracticeRetest(s, service, gateway);
+    var input = Map.<String, Object>of("turnId", turnId, "findingIndex", 0, "answer", "新的补答");
+    assertEquals(413, assertThrows(ModelContext.TooLarge.class,
+      () -> retesting.run(f[0], f[1], input)).getStatusCode().value());
+    var failed = service.get(f[0], f[1]);
+    assertEquals(state.get("report"), failed.get("report"));
+    assertEquals(0L, failed.get("leaseUntil"));
+    var saved = PracticeRetest.object(failed.get("retest"));
+    assertEquals("FAILED", saved.get("status"));
+    assertEquals("新的补答", saved.get("answer"));
+    verify(gateway, times(1)).report(any());
   }
 }
