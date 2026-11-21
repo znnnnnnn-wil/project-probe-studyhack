@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   FolderOpen,
@@ -6,6 +6,7 @@ import {
   Plus,
   Search,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import { api, go } from "./api";
 import type { ProjectSummary, TrainingSummary } from "./types";
@@ -20,6 +21,9 @@ export function Workspace({
     trainings: TrainingSummary[];
   } | null>(null);
   const [query, setQuery] = useState("");
+  const [deleting, setDeleting] = useState<ProjectSummary | null>(null);
+  const [notice, setNotice] = useState("");
+  const search = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const controller = new AbortController();
     run(async () => {
@@ -63,6 +67,24 @@ export function Workspace({
           新建项目
         </button>
       </div>
+      {notice && <p role="status">{notice}</p>}
+      {deleting && <DeleteProjectDialog project={deleting} onCancel={() => setDeleting(null)} onDeleted={() => {
+        const projectId = deleting.id!;
+        for (const prefix of ["project-draft:", "project:expand:", "practice-draft:", "practice-draft-turn:", "practice-draft-exchange:", "practice-review:"])
+          sessionStorage.removeItem(prefix + projectId);
+        const trainingIds = data!.trainings.filter(t => t.project.id === projectId).map(t => t.id);
+        for (const key of Object.keys(sessionStorage)) {
+          if (trainingIds.some(id => key.startsWith("draft:" + id + ":") || key.startsWith("plan-draft:" + id + ":")))
+            sessionStorage.removeItem(key);
+        }
+        setData(current => current && ({
+          projects: current.projects.filter(p => p.id !== projectId),
+          trainings: current.trainings.filter(t => t.project.id !== projectId),
+        }));
+        setNotice(`已删除“${deleting.name}”及其训练内容。`);
+        setDeleting(null);
+        search.current?.focus();
+      }} />}
       {!data ? (
         <div className="empty" role="status">
           正在读取工作台…
@@ -108,6 +130,7 @@ export function Workspace({
                 <label className="search-field">
                   <Search size={16} />
                   <input
+                    ref={search}
                     aria-label="搜索项目"
                     placeholder="搜索名称、技术栈"
                     value={query}
@@ -178,6 +201,12 @@ export function Workspace({
                             查看最近报告
                           </a>
                         )}
+                        <button type="button" className="project-delete-link" aria-haspopup="dialog" onClick={() => {
+                          setNotice("");
+                          setDeleting(p);
+                        }}>
+                          <Trash2 size={14} aria-hidden="true" />删除项目
+                        </button>
                       </div>
                     </article>
                   );
@@ -188,4 +217,61 @@ export function Workspace({
       )}
     </section>
   );
+}
+
+function DeleteProjectDialog({ project, onCancel, onDeleted }: {
+  project: ProjectSummary;
+  onCancel: () => void;
+  onDeleted: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    cancel.current!.focus();
+    return () => element.close();
+  }, []);
+  return <dialog ref={dialog} className="project-delete-dialog" aria-labelledby="project-delete-title"
+    aria-describedby="project-delete-description" onCancel={event => {
+      event.preventDefault();
+      if (!busy) onCancel();
+    }}>
+    <form aria-busy={busy} onSubmit={async event => {
+      event.preventDefault();
+      if (busy || !password || confirmation !== project.name) return;
+      setBusy(true);
+      setError("");
+      try {
+        await api("/projects/" + encodeURIComponent(project.id!), "DELETE", { password, confirmation });
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : "删除失败，请稍后重试。");
+        setBusy(false);
+        return;
+      }
+      dialog.current!.close();
+      onDeleted();
+    }}>
+      <span className="project-delete-icon"><Trash2 size={24} aria-hidden="true" /></span>
+      <h2 id="project-delete-title">删除项目</h2>
+      <p className="project-delete-name">{project.name}</p>
+      <p id="project-delete-description">项目材料、修订、全部面试问答、报告和草稿将一并永久删除，无法恢复。其他项目不受影响。</p>
+      <label htmlFor="project-delete-password">当前密码</label>
+      <input id="project-delete-password" type="password" autoComplete="current-password" required
+        disabled={busy} value={password} onChange={event => setPassword(event.target.value)} />
+      <label htmlFor="project-delete-confirmation">输入完整项目名称以确认</label>
+      <input id="project-delete-confirmation" autoComplete="off" required disabled={busy}
+        value={confirmation} onChange={event => setConfirmation(event.target.value)} />
+      {error && <p className="project-delete-error" role="alert">{error}</p>}
+      <div className="project-delete-actions">
+        <button ref={cancel} type="button" className="button secondary" disabled={busy} onClick={onCancel}>取消</button>
+        <button type="submit" className="button project-delete-confirm"
+          disabled={busy || !password || confirmation !== project.name}>{busy ? "正在删除…" : "永久删除项目"}</button>
+      </div>
+    </form>
+  </dialog>;
 }

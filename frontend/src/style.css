@@ -1668,6 +1668,72 @@ hr {
   font-size: 11px;
   color: var(--muted);
 }
+.project-delete-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: #b42318;
+  font-size: 12px;
+}
+.project-delete-link:hover {
+  text-decoration: underline;
+}
+.project-delete-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 24px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  color: var(--ink);
+  background: var(--paper);
+}
+.project-delete-dialog::backdrop {
+  background: rgb(23 29 45 / 45%);
+}
+.project-delete-icon {
+  display: inline-flex;
+  padding: 12px;
+  margin-bottom: 16px;
+  border-radius: var(--r-md);
+  color: #b42318;
+  background: #fff1f0;
+}
+.project-delete-dialog h2 {
+  margin-bottom: 8px;
+}
+.project-delete-name {
+  color: var(--ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.project-delete-dialog label {
+  margin-top: 16px;
+}
+.project-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+.project-delete-dialog .project-delete-error {
+  color: #b42318;
+  margin-top: 12px;
+}
+.button.project-delete-confirm {
+  background: #b42318;
+  border-color: #b42318;
+  color: #fff;
+}
+.button.project-delete-confirm:hover:not(:disabled) {
+  background: #912018;
+}
 .badge.confirmed {
   color: var(--blue-deep);
   background: var(--blue-100);
