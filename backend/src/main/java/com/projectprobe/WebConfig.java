@@ -35,16 +35,15 @@ public class WebConfig extends OncePerRequestFilter {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Referrer-Policy", "no-referrer");
-    if (req.getRequestURI().startsWith("/api/")) res.setHeader(
+    String path = req.getRequestURI().substring(req.getContextPath().length());
+    if (path.startsWith("/api/")) res.setHeader(
       "Cache-Control",
       "no-store"
     );
     boolean upload =
       req.getMethod().equals("POST") &&
-      (req.getRequestURI().equals("/api/resume/import") ||
-        req
-          .getRequestURI()
-          .matches("/api/(trainings/[a-f0-9-]{36}|projects/[a-f0-9-]{36}/practice)/transcribe")) &&
+      (path.equals("/api/resume/import") ||
+        path.matches("/api/(trainings/[a-f0-9-]{36}|(?:examples/)?projects/[a-f0-9-]{36}/practice)/transcribe")) &&
       Objects.toString(req.getContentType(), "").startsWith(
         "multipart/form-data"
       );
@@ -61,9 +60,8 @@ public class WebConfig extends OncePerRequestFilter {
     }
     if (
       mutation &&
-      Set.of("/api/auth/login", "/api/auth/register", "/api/auth/recover", "/api/account/recovery", "/api/account/password").contains(
-        req.getRequestURI()
-      )
+      (Set.of("/api/auth/login", "/api/auth/register", "/api/auth/recover", "/api/account/recovery", "/api/account/password").contains(path)
+        || path.matches("/api/examples/projects/[^/]+/open"))
     ) {
       String client;
       try {

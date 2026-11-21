@@ -22,7 +22,7 @@ class PracticeTranscriptionTest {
   private final ProjectPractice practice = mock(ProjectPractice.class);
   private final InputService inputs = mock(InputService.class);
   private final MockMvc mvc = MockMvcBuilders.standaloneSetup(
-    new PracticeApi(auth, practice, null, null, inputs)
+    new PracticeApi(auth, practice, null, null, inputs, null)
   ).setControllerAdvice(new Errors()).build();
 
   private MockMultipartHttpServletRequestBuilder transcribe() {
