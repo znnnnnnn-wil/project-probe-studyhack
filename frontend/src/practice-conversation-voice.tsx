@@ -13,7 +13,7 @@ type VoiceTarget = {
 };
 
 type PracticeConversationVoiceProps = VoiceTarget & {
-  projectId: string;
+  endpoint: string;
   enabled: boolean;
   suspended: boolean;
   promptPlaying: boolean;
@@ -42,7 +42,7 @@ function sameTarget(left: VoiceTarget, right: VoiceTarget) {
 }
 
 export function PracticeConversationVoice(props: PracticeConversationVoiceProps) {
-  const { projectId, turnId, exchangeCount, enabled, suspended, promptPlaying, onCancel } = props;
+  const { endpoint, turnId, exchangeCount, enabled, suspended, promptPlaying, onCancel } = props;
   const current = useRef(props);
   current.current = props;
   const controls = useRef<{
@@ -166,7 +166,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       request = controller;
       try {
         const result = await upload<{ text: string }>(
-          "/projects/" + projectId + "/practice/transcribe",
+          endpoint + "/transcribe",
           audio,
           "answer.wav",
           { turnId: audioTarget.turnId, exchangeCount: String(audioTarget.exchangeCount) },
@@ -315,7 +315,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       void context?.close().catch(() => {});
       current.current.onProcessing?.(false);
     };
-  }, [attempt, enabled, paused, projectId]);
+  }, [attempt, enabled, paused, endpoint]);
 
   useEffect(() => {
     controls.current?.sync();
