@@ -158,6 +158,10 @@ class ProjectPractice {
     return turn;
   }
 
+  String speechPrompt(String user, String projectId, String turnId, Object exchangeCount) {
+    return PracticeDialogue.currentPrompt(requireUnansweredTurn(user, projectId, turnId, exchangeCount));
+  }
+
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
     String token = id();
     boolean restart = Boolean.TRUE.equals(input.get("restart"));
@@ -247,10 +251,16 @@ class ProjectPractice {
           String utterance = str(pending, "answer");
           var reply = PracticeDialogue.decide(model, body, turn, utterance);
           var exchanges = list(turn, "exchanges");
-          exchanges.add(Map.of("answer", utterance, "reply", reply.text()));
+          var exchange = new LinkedHashMap<String, Object>(Map.of("answer", utterance, "reply", reply.text()));
+          if (reply.explained()) {
+            exchange.put("explained", true);
+            turn.put("explanation", reply.text());
+          }
+          exchanges.add(exchange);
           body.remove("pendingExchange");
           if (reply.advance()) {
             turn.put("answer", PracticeDialogue.combinedAnswer(exchanges));
+            turn.put("answeredIndependently", reply.answeredIndependently());
             // Keep the model's decision if generating the next question or report fails.
             s.locked(user, () -> {
               requireLease(user, roundId, token);

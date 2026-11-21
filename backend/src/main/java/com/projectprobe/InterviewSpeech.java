@@ -81,9 +81,8 @@ public class InterviewSpeech {
 
   void speak(String user, String projectId, String turnId, Object exchangeCount, HttpServletResponse response) {
     if (!ttsReady()) throw error(503, "面试官语音暂未配置，将使用浏览器播报");
-    var turn = practice.requireUnansweredTurn(user, projectId, turnId, exchangeCount);
-    String text = PracticeDialogue.currentPrompt(turn);
-    if (text.isBlank() || text.length() > 300) throw error(409, "当前问题不支持语音播报");
+    String text = practice.speechPrompt(user, projectId, turnId, exchangeCount);
+    if (text.isBlank() || text.length() > 650) throw error(409, "当前问题不支持语音播报");
     inputs.limited(user, "TTS", Math.max(1, Math.min(dailyLimit, 200)), () -> {
       synthesize(text, response);
       return Boolean.TRUE;

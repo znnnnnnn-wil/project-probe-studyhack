@@ -164,8 +164,9 @@ class CompetitionPracticeTest {
     return spy(new ModelService(s, "live", "https://model.example/v1", "synthetic-key", "test", "test"));
   }
 
-  @Test void dialogueReceivesEarlierTopicsWithoutBorrowingTheirEvidence() {
-    String answer = "我会从接口请求开始说明";
+  @ParameterizedTest
+  @ValueSource(strings = {"还是使用前面说的请求键", "不会"})
+  void bothDialogueAndTeachingReceiveEarlierTopicsWithoutBorrowingTheirEvidence(String answer) {
     var model = dialogueModel();
     var previous = Map.<String, Object>of("id", "before", "question", "如何去重？", "answer", "请求键在服务端持久化",
       "exchanges", List.of(Map.of("answer", "请求键在服务端持久化", "reply", "旧讲解")));
@@ -261,5 +262,214 @@ class CompetitionPracticeTest {
     assertEquals("FAILED", saved.get("status"));
     assertEquals("新的补答", saved.get("answer"));
     verify(gateway, times(1)).report(any());
+  }
+  @ParameterizedTest
+  @ValueSource(strings = {"不会", "不知道", "我不会回答", "求答案", "直接告诉我答案", "这道题我不会，请讲解一下。",
+    "你直接给我答案吧。", "请你直接告诉我答案", "麻烦您讲解一下这道题"})
+  void explicitRequestsTeachWithoutAnotherProgressDecision(String answer) {
+    var model = dialogueModel();
+    String explanation = "假设请求超时，以同一幂等键重试并读取已保存结果。去重记录应与业务写入一致；跨服务副作用仍需核对或补偿。";
+    doReturn(Map.of("reply", explanation)).when(model).call(anyString(), any());
+    var turn = new LinkedHashMap<String, Object>(Map.of("topic", "幂等", "question", "重试如何避免重复写入？"));
+    var reply = PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer);
+    assertFalse(reply.advance());
+    assertTrue(reply.explained());
+    assertEquals(explanation, reply.text());
+    verify(model, times(1)).call(contains("只返回"), argThat(data ->
+      data instanceof Map<?, ?> input && answer.equals(input.get("latestAnswer")) && turn.get("question").equals(input.get("question"))));
+    var demo = PracticeDialogue.decide(practice.model, Map.of(), turn, answer);
+    assertFalse(demo.advance());
+    assertTrue(demo.explained());
+    assertTrue(demo.text().startsWith("规则示例"));
+    assertTrue(demo.text().contains("同一请求键"));
+    assertTrue(demo.text().contains("跨服务"));
+    assertTrue(demo.text().length() <= 300);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"没听懂，请澄清题意，不是要答案。", "我不知道你问的题意是什么，请换个说法讲一下问题而不是给出答案。",
+    "不会重复消费", "不知道结果是否提交", "你先不要告诉我答案", "他说：‘你直接给我答案吧。’"})
+  void clarificationAndTechnicalNegationsDoNotTriggerTeaching(String answer) {
+    var turn = new LinkedHashMap<String, Object>(Map.of("question", "如何处理重复请求？"));
+    var model = dialogueModel();
+    doReturn(Map.of("decision", "FOLLOW_UP", "reply", "这道题问的是请求去重，可以说说判断依据。"))
+      .when(model).call(anyString(), any());
+    var reply = PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer);
+    assertFalse(reply.advance());
+    assertFalse(reply.explained());
+    verify(model).call(contains("不会重复消费"), any());
+    var demo = PracticeDialogue.decide(practice.model, Map.of(), turn, answer);
+    assertFalse(demo.advance());
+    assertFalse(demo.explained());
+  }
+
+  @Test void liveModelRecognizesNonFormulaicRequestsFromLatestUtterance() {
+    var model = dialogueModel();
+    String answer = "关于这个机制我确实答不出来，希望你先给一个参考解法。";
+    doReturn(Map.of("decision", "EXPLAIN", "reply", "假设使用稳定请求键，重复提交可读取原结果；写入与去重记录应保持一致。", "evidence", "我确实答不出来"))
+      .when(model).call(anyString(), any());
+    var turn = new LinkedHashMap<String, Object>(Map.of("question", "如何处理重复请求？"));
+    var reply = PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer);
+    assertFalse(reply.advance());
+    assertTrue(reply.explained());
+    verify(model).call(contains("只能来自latestAnswer"), argThat(data ->
+      data instanceof Map<?, ?> input && answer.equals(input.get("latestAnswer"))));
+  }
+
+  @Test void explanationEvidenceMustBeNonemptyAndFromLatestAnswerOnly() {
+    var prior = List.<Map<String, Object>>of(Map.of("answer", "请告诉我答案", "reply", "我先解释题意。"));
+    var reply = PracticeDialogue.parse(Map.of("decision", "EXPLAIN", "reply", "讲".repeat(300), "evidence", "不会"), prior, "不会");
+    assertFalse(reply.advance());
+    assertTrue(reply.explained());
+    for (Object evidence : List.of("请告诉我答案", "我先解释题意", "不知道", " 不会 ", " ", 12)) {
+      assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parse(
+        Map.of("decision", "EXPLAIN", "reply", "示例讲解", "evidence", evidence), prior, "不会"));
+    }
+    assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parse(
+      Map.of("decision", "EXPLAIN", "reply", "讲".repeat(301), "evidence", "不会"), prior, "不会"));
+    assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parse(
+      Map.of("decision", "ADVANCE", "reply", "好的", "evidence", "不会"), prior, "不会"));
+    var detailed = List.<Map<String, Object>>of(Map.of("answer", "使用唯一键保存请求结果"));
+    assertTrue(PracticeDialogue.parse(Map.of("decision", "ADVANCE", "reply", "好的", "evidence", "唯一键保存请求结果"), detailed, "重复返回原结果").advance());
+  }
+
+  @Test void advancingPastSomeoneElsesResponsibilityDoesNotMarkAnIndependentAnswer() {
+    String boundary = "这部分由同事负责，我没有参与实现。";
+    var reply = PracticeDialogue.parse(Map.of("decision", "ADVANCE", "reply", "我们继续。", "evidence", boundary,
+      "answeredIndependently", false), List.of(), boundary);
+    assertTrue(reply.advance());
+    assertFalse(reply.answeredIndependently());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"明白了", "我学会了", "听懂了", "我已经理解了", "好的，我懂了，下一题吧", "这下明白了，我们继续下一题吧",
+    "学会了，下一题吧", "学会了，你下一题吧。", "我学会了，你继续下一题吧", "嗯，学会了，请你出下一题吧", "懂了，咱们继续下一题吧",
+    "我学会了，继续吧。", "学会了，继续", "我懂了，你继续吧", "嗯，听懂了，我们继续吧", "我明白了，可以继续了",
+    "我已经理解了，请您接着问吧", "这下我听明白了，咱们继续下一题吧", "我学会了，谢谢老师，继续吧", "好的，我懂了，继续吧，谢谢",
+    "听懂了呀，接着来吧", "我学会了啦，下一题吧", "我懂了，请继续问下一个问题吧",
+    "OK，我学会了下一题吧。", "理解了，已经全部都理解了。", "嗯嗯，完全听懂了，继续吧。"})
+  void understandingConfirmationOnlyAdvancesDuringTeaching(String answer) {
+    var turn = Map.<String, Object>of("question", "如何处理重复请求？", "explanation", "假设使用稳定请求键。");
+    var model = dialogueModel();
+    assertTrue(PracticeDialogue.parseLearning(Map.of("decision", "LEARNED", "reply", "好的", "evidence", answer), answer).advance());
+    var reply = PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer);
+    assertTrue(reply.advance());
+    assertFalse(reply.explained());
+    verify(model, never()).call(anyString(), any());
+    assertTrue(PracticeDialogue.decide(practice.model, Map.of(), turn, answer).advance());
+    assertFalse(PracticeDialogue.decide(practice.model, Map.of(), Map.of("question", turn.get("question")), answer).advance());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"还没懂", "明白了，但是为什么要先提交事务？", "懂了？", "请继续下一题", "同一请求键先查已有结果再写入，跨服务还需要核对状态或者补偿",
+    "你下一题吧", "哎呀，做下一题吧。", "没学会，你下一题吧", "学会了，你下一题吧，不过还有疑问", "学会了？你下一题吧", "你说学会了就下一题吧",
+    "继续吧", "可以继续了", "我还没学会，继续讲吧", "我学会了？继续吧", "我学会了吗，继续吧", "我学会了，继续讲解这道题吧",
+    "我学会了，不过为什么要这样做", "我好像学会了，继续吧", "如果我学会了，就继续吧", "等我学会了再继续", "你说我学会了，继续吧", "他说‘我学会了，继续吧’"})
+  void questionsAndRestatedAnswersStayInTeaching(String answer) {
+    var model = dialogueModel();
+    var turn = Map.<String, Object>of("question", "如何处理重复请求？", "explanation", "先查询持久化结果。");
+    String explanation = "换个例子，假设请求超时后重试，先用原请求键核对是否已完成。还有不懂的可以继续问。";
+    doReturn(Map.of("decision", "EXPLAIN", "reply", explanation)).when(model).call(anyString(), any());
+    var reply = PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer);
+    assertFalse(reply.advance());
+    assertTrue(reply.explained());
+    assertEquals(explanation, reply.text());
+    verify(model).call(contains("没有尚未解决的疑问"), argThat(data ->
+      data instanceof Map<?, ?> input && turn.get("explanation").equals(input.get("currentExplanation"))));
+    assertFalse(PracticeDialogue.decide(practice.model, Map.of(), turn, answer).advance());
+  }
+
+  @Test void learningCannotBorrowConfirmationOrUseTheNormalAdvanceDecision() {
+    assertTrue(PracticeDialogue.parseLearning(Map.of("decision", "LEARNED", "reply", "好的", "evidence", "学会了"),
+      "你这样一解释，我确实学会了这个处理方法。").advance());
+    for (String evidence : List.of("我学会了", "我学会了，继续吧。"))
+      assertTrue(PracticeDialogue.parseLearning(Map.of("decision", "LEARNED", "reply", "好的", "evidence", evidence),
+        "我学会了，继续吧。").advance());
+    for (String answer : List.of("还没懂", "继续吧"))
+      assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parseLearning(
+        Map.of("decision", "LEARNED", "reply", "好的", "evidence", "懂了"), answer));
+    assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parseLearning(
+      Map.of("decision", "ADVANCE", "reply", "好的", "evidence", "明白了"), "明白了"));
+    for (Object evidence : List.of(" ", 12, "懂".repeat(241)))
+      assertThrows(ResponseStatusException.class, () -> PracticeDialogue.parseLearning(
+        Map.of("decision", "LEARNED", "reply", "好的", "evidence", evidence), "我学会了，继续吧。"));
+  }
+
+  @ParameterizedTest
+  @CsvSource({"我已经全部都理解了，你怎么还问？,我已经全部都理解了", "我听懂了，不用再讲了，继续吧。,我听懂了"})
+  void unrelatedRemarksDoNotInvalidateSpokenLearningConfirmation(String answer, String evidence) {
+    var model = dialogueModel();
+    var turn = Map.<String, Object>of("question", "如何处理重复请求？", "explanation", "先查询持久化结果。");
+    doReturn(Map.of("decision", "LEARNED", "reply", "好的，我们继续。", "evidence", evidence))
+      .when(model).call(anyString(), any());
+    assertTrue(PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer).advance());
+    verify(model).call(contains("与本题无关的反问"), any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"好的,好的", "继续吧,继续吧", "懂了，但还有疑问,懂了", "懂了？,懂了", "我没学会了，继续吧,学会了",
+    "我学会了，不过为什么要这样做,学会了", "我学会了，先别继续,学会了", "我学会了，再讲一下吧,学会了",
+    "我学会了，继续讲解这道题吧,学会了", "我学会了，请接着解释这个例子,学会了", "我不认为我学会了，继续讲吧,学会了",
+    "我没有学会，等我学会了再继续,学会了", "我好像学会了，继续吧,学会了", "如果我学会了，就继续吧,学会了", "等我学会了再继续,学会了",
+    "你说我学会了，继续吧,学会了", "他说‘我学会了，继续吧’,学会了", "我已经把这个流程理顺了,我已经把这个流程理顺了",
+    "OK，我学会了，不过为什么要先提交事务？,我学会了", "理解了，但我还没学会怎么去重。,理解了"})
+  void uncertainLearningEvidenceAsksForClarificationInsteadOfFailing(String answer, String evidence) {
+    var model = dialogueModel();
+    doReturn(Map.of("decision", "LEARNED", "reply", "我们进入下一题", "evidence", evidence))
+      .when(model).call(anyString(), any());
+    var turn = Map.<String, Object>of("question", "如何处理重复请求？", "explanation", "先查询持久化结果。");
+    var reply = PracticeDialogue.decide(model, Map.of("project", Map.of()), turn, answer);
+    assertFalse(reply.advance());
+    assertFalse(reply.explained());
+    assertFalse(reply.text().contains("下一题"));
+    var parsed = PracticeDialogue.parseLearning(Map.of("decision", "LEARNED", "reply", "我们进入下一题", "evidence", evidence), answer);
+    assertFalse(parsed.advance());
+    assertFalse(parsed.explained());
+    assertTrue(parsed.text().contains("这道题已经理解了吗"));
+  }
+
+  @Test void teachingWaitsForLearningOnEveryTurnAndKeepsUnassistedEvidence() {
+    var f = fixture();
+    var state = practice.run(f[0], f[1], Map.of());
+    String firstId = str(list(state, "turns").get(0), "id");
+    state = practice.run(f[0], f[1], Map.of("turnId", firstId, "dialogue", true, "exchangeCount", 0, "answer", "使用唯一键。"));
+    var answers = List.of("不会", "求答案", "不知道", "请告诉我答案", "这道题我不会，请讲解一下。");
+    for (int i = 0; i < answers.size(); i++) {
+      var turn = list(state, "turns").get(i);
+      state = practice.run(f[0], f[1], Map.of("turnId", turn.get("id"), "dialogue", true,
+        "exchangeCount", PracticeDialogue.count(turn), "answer", answers.get(i)));
+      var saved = list(state, "turns").get(i);
+      String explanation = str(saved, "explanation");
+      assertTrue(explanation.startsWith("规则示例"));
+      assertEquals(explanation, PracticeDialogue.currentPrompt(saved));
+      assertEquals("", str(saved, "answer"));
+      assertEquals("ACTIVE", state.get("status"));
+      assertFalse(state.containsKey("report"));
+      assertEquals(i + 1, list(state, "turns").size());
+      assertEquals(state, practice.get(f[0], f[1]));
+      assertEquals(state, practice.run(f[0], f[1], Map.of()));
+      for (String followUp : List.of("还没懂，再解释一下", "同一请求键先查已有结果再写入，跨服务还需要核对状态或者补偿", "好的")) {
+        state = practice.run(f[0], f[1], Map.of("turnId", turn.get("id"), "dialogue", true,
+          "exchangeCount", PracticeDialogue.count(saved), "answer", followUp));
+        saved = list(state, "turns").get(i);
+        assertEquals("", saved.get("answer"));
+        assertEquals(i + 1, list(state, "turns").size());
+        assertEquals("ACTIVE", state.get("status"));
+      }
+      state = practice.run(f[0], f[1], Map.of("turnId", turn.get("id"), "dialogue", true,
+        "exchangeCount", PracticeDialogue.count(saved), "answer", "我学会了，下一题"));
+      saved = list(state, "turns").get(i);
+      assertEquals(i == 0 ? "使用唯一键。\n不会" : answers.get(i), saved.get("answer"));
+      if (i < 4) {
+        assertEquals("ACTIVE", state.get("status"));
+        assertEquals(i + 2, list(state, "turns").size());
+        assertFalse(list(state, "turns").get(i + 1).containsKey("explanation"));
+      }
+    }
+    assertEquals("COMPLETED", state.get("status"));
+    var findings = list(PracticeRetest.object(state.get("report")), "findings");
+    assertEquals(5, findings.size());
+    for (int i = 0; i < findings.size(); i++)
+      assertEquals(list(state, "turns").get(i).get("answer"), list(findings.get(i), "evidence").get(0).get("quote"));
   }
 }
