@@ -19,6 +19,7 @@ const Home = lazy(() =>
   import("./landing").then((module) => ({ default: module.Home })),
 );
 const Experience = lazy(() => import("./experience").then(module => ({ default: module.ExperiencePage })));
+const ExampleProjects = lazy(() => import("./example-projects").then(module => ({ default: module.ExampleProjects })));
 const Account = lazy(() => import("./account").then(module => ({ default: module.Account })));
 const PrivacyInfo = lazy(() => import("./privacy").then(module => ({ default: module.PrivacyInfo })));
 const Login = lazy(() =>
@@ -71,7 +72,7 @@ function App() {
     const timeout = window.setTimeout(() => controller.abort(), 5000);
     api<typeof config>("/config", "GET", undefined, controller.signal)
       .then(setConfig)
-      .catch(() => setServiceError("自有项目服务暂未连接。你可以返回首页免登录体验示例；本地使用请先启动后端再刷新。"));
+      .catch(() => setServiceError("面试服务暂未连接。你可以返回首页使用快捷体验；本地使用请先启动后端再刷新。"));
     api<typeof user>("/me", "GET", undefined, controller.signal)
       .then((value) => {
         if (value) syncSessionUser(value.id);
@@ -212,8 +213,11 @@ function App() {
       <main className={publicHome ? undefined : "app-main"}>
         <PageBoundary key={`${user?.id || "guest"}:${path}`}>
           <Suspense fallback={<Loading />}>
-            {nav === "experience" ? <Experience key={path} />
-            : publicHistory ? (
+            {nav === "experience" ? (
+              routeId ? <ProjectInterview id={routeId} example fromHistory={projectQuery.get("from") === "history"} {...props} /> :
+              ["quick", "legacy"].includes(projectQuery.get("mode") || "") ? <Experience /> :
+              <ExampleProjects preferred={projectQuery.get("sample")} {...props} />
+            ) : publicHistory ? (
               historyOverview && !ready ? <Loading /> :
                 <History example={exampleHistory} signedIn={!!user} projectId={historyProjectId} roundId={exampleRoundId} {...props} />
             ) : nav === "privacy" ? <PrivacyInfo /> : publicHome ? (

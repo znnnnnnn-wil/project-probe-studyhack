@@ -36,8 +36,12 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     expect((await model).ok()).toBe(true);
     await ready(page);
     await fits(page);
-    await page.goto("/#/experience");
-    await page.getByRole("button", { name: "开始五轮练习", exact: true }).click();
+    await page.evaluate(() => sessionStorage.setItem("project-probe:experience:v1", JSON.stringify({
+      version: 1, sample: "booking", started: true, answers: [], draft: "",
+      notes: Array(5).fill(""), checked: Array(5).fill(false),
+    })));
+    await page.goto("/#/experience?mode=legacy");
+    await page.getByRole("button", { name: "进入面试室", exact: true }).click();
     const room = page.getByRole("dialog", { name: "示例面试室" });
     await expect(room).toBeVisible();
     await ready(page);

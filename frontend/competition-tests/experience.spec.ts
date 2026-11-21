@@ -1,38 +1,33 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { mockPracticeVoice } from "../tests/practice-voice-fixture";
+import { mockHandsFree, mockPracticeVoice } from "../tests/practice-voice-fixture";
+import type { Practice } from "../src/use-project-practice";
 
-test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", async ({ page }) => {
+test("已有的旧版示例可以离线续练、恢复草稿并导出", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/api/**", (route) =>
     route.fulfill({ status: 503, json: { message: "测试：后端离线" } }),
   );
+  await page.addInitScript(() => {
+    const key = "project-probe:experience:v1";
+    if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({
+      version: 1, sample: "booking", started: true, answers: [], draft: "",
+      notes: Array(5).fill(""), checked: Array(5).fill(false),
+    }));
+  });
   await page.goto("/");
   await expect(
     page.getByRole("heading", { name: /把项目经历[，,]\s*讲清楚/ }),
   ).toBeVisible();
   await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
-  await page.getByRole("button", { name: "开始五轮练习" }).click();
-  const room = page.getByRole("dialog", { name: "示例面试室" });
-  await expect(room).toBeVisible();
-  await expect(room.getByText("第 1 / 5 题", { exact: true })).toBeVisible();
-  await expect(room.getByRole("button", { name: "同意并开始语音面试" })).toBeVisible();
-  await page.screenshot({ path: test.info().outputPath("example-room-desktop.png"), fullPage: true });
-  await room.getByLabel("本轮回答").fill("第一轮草稿：我负责预约接口。");
-  await room.getByRole("button", { name: "返回练习", exact: true }).click();
-  await expect(room).not.toBeVisible();
-  await expect(page.getByLabel("本轮回答")).toHaveValue("第一轮草稿：我负责预约接口。");
-  await page.getByRole("button", { name: "进入面试室", exact: true }).click();
-  await expect(room.getByLabel("本轮回答")).toHaveValue("第一轮草稿：我负责预约接口。");
+  await page.getByRole("link", { name: "查看当前标签页的旧版示例练习" }).click();
+  await page.getByLabel("本轮回答").fill("第一轮草稿：我负责预约接口。");
   await page.reload();
   await expect(page.getByLabel("本轮回答")).toHaveValue(
     "第一轮草稿：我负责预约接口。",
   );
-  await expect(room).not.toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await page.getByRole("button", { name: "进入面试室", exact: true }).click();
-  await expect(room).toBeVisible();
   for (let i = 0; i < 5; i++) {
     await page
       .getByLabel("本轮回答")
@@ -44,7 +39,6 @@ test("无后端也能完成五轮、恢复草稿并导出带原文的复盘", as
       .click();
     if (i < 4) await expect(page.getByLabel("本轮回答")).toHaveValue("");
   }
-  await expect(room).not.toBeVisible();
   await expect(
     page.getByRole("heading", { name: "这轮练习，留下了什么？" }),
   ).toBeVisible();
@@ -90,11 +84,13 @@ test("项目语音面试刷新后可续训，完成后可回看档案", async ({
   await page.getByRole("button", { name: "返回项目列表" }).click();
   await page.getByRole("link", { name: "进入面试室" }).click();
   const room = page.getByRole("dialog", { name: "项目面试室" });
+  await expect(room.getByRole("button", { name: "用参考回答开始" })).toHaveCount(0);
   await room.getByRole("button", { name: "同意并开始语音面试" }).click();
   const project = new URL(page.url()).hash.split("/").pop()!.split("?")[0];
   for (let i = 0; i < 5; i++) {
     const progress = room.getByText(`第 ${i + 1} / 5 题`, { exact: true });
     await expect(progress).toBeVisible();
+    if (i === 0) await expect(room.getByRole("region", { name: "参考回答" })).toHaveCount(0);
     if (i === 1) {
       await page.reload();
       await expect(progress).toBeVisible();
@@ -103,7 +99,6 @@ test("项目语音面试刷新后可续训，完成后可回看档案", async ({
     answer = `第${i + 1}题：我负责预约接口，通过数据库唯一约束避免重复写入，尚未验证并发。`;
     await voice.speak();
   }
-  await expect(page).toHaveURL(new RegExp(`#/history/${project}/[^/]+$`));
   const archive = page.getByRole("region", { name: "面试详情" });
   await expect(archive.getByRole("region", { name: "本场评分" })).toContainText("未评分");
   await expect(page.locator("#project-materials")).toHaveCount(0);
@@ -147,28 +142,95 @@ test("项目语音面试刷新后可续训，完成后可回看档案", async ({
   expect(finalContent).toContain(revised);
 });
 
-test("手机端可选择 RAG 场景，回看旧回答不会覆盖当前草稿", async ({ page }) => {
+test("手机访客直接进入正式面试室，答疑、报告和复测均可从训练记录回看", async ({ page, browser }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  let privateHistoryReads = 0;
+  page.on("request", request => {
+    if (["/api/practice-history", "/api/training-page"].includes(new URL(request.url()).pathname))
+      privateHistoryReads++;
+  });
+  let answer = "";
+  const voice = await mockPracticeVoice(page, () => answer);
+  await page.goto("/#/history");
+  await expect(page.getByRole("heading", { name: "还没有示例训练记录" })).toBeVisible();
   await page.goto("/#/experience?sample=rag");
-  await expect(
-    page.getByRole("button", { name: /RAG \/ Agent/ }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("heading", { name: "选择练习场景" })).toBeVisible();
+  const examples = page.getByRole("group", { name: "练习场景" });
+  await expect(examples.getByRole("button")).toHaveCount(3);
+  const rag = examples.getByRole("button", { name: /课程资料问答助手/ });
+  await expect(rag).toHaveAttribute("aria-pressed", "true");
+  await examples.getByRole("button", { name: /校园通知定时发送服务/ }).click();
+  await expect(page.getByRole("region", { name: "练习预览" })).toContainText("校园通知定时发送服务");
+  await rag.click();
+  await expect(page.getByRole("region", { name: "练习材料" })).toContainText("段落编号");
   await page.getByRole("button", { name: "开始五轮练习" }).click();
-  const room = page.getByRole("dialog", { name: "示例面试室" });
-  await expect(room).toBeVisible();
-  await page.screenshot({ path: test.info().outputPath("example-room-mobile.png"), fullPage: true });
-  await room.getByLabel("本轮回答").fill("我负责文档切分。");
-  await page.getByRole("button", { name: "保存回答，继续追问" }).click();
-  await page.getByLabel("本轮回答").fill("当前题目的未提交草稿");
-  await page.getByRole("button", { name: "个人职责", exact: true }).click();
-  await expect(
-    page.getByText("我负责文档切分。", { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "回到当前追问" }).click();
-  await expect(page.getByLabel("本轮回答")).toHaveValue("当前题目的未提交草稿");
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  await expect(room.getByRole("region", { name: "项目相关信息" })).toContainText("向量检索");
+  await expect(room.getByRole("region", { name: "项目相关信息" })).toContainText("课程讲义");
+  await room.getByText("项目经历原文", { exact: true }).click();
+  await expect(room.getByText(/相似章节容易召回错误片段/)).toBeVisible();
+  await expect(room.getByRole("button", { name: "返回示例项目" })).toBeVisible();
+  expect(await room.evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
+  const openUrl = page.url();
+  const projectId = new URL(openUrl).hash.split("/").pop();
+  const endpoint = "/api/examples/projects/" + projectId + "/practice";
+  await room.getByLabel("面试主题（选填）").fill("检索与引用");
+  await room.getByRole("button", { name: "同意并开始语音面试" }).click();
+  const progress = (i: number) => room.getByText(`第 ${i} / 5 题`, { exact: true });
+  await expect(progress(1)).toBeVisible();
+  expect((await (await page.request.get(endpoint)).json()).turns[0].answer).toBe("");
+  answer = "我负责检索。";
+  await voice.speak();
+  await expect(progress(1)).toBeVisible();
+  answer = "这题我不会";
+  await voice.speak();
+  await expect(room.getByText(/正在讲解本题，没听懂可以继续问/)).toBeVisible();
+  await expect(progress(1)).toBeVisible();
+  answer = "我学会了。";
+  await voice.speak();
+  await expect(progress(2)).toBeVisible();
+
+  await room.getByRole("button", { name: "返回示例项目" }).click();
+  await page.getByRole("link", { name: "查看训练记录" }).click();
+  await page.getByRole("link", { name: /课程资料问答助手/ }).click();
+  await page.getByRole("link", { name: "继续训练" }).click();
+  await expect(progress(2)).toBeVisible();
+  await expect(room.getByRole("button", { name: "发送参考回答" })).toHaveCount(0);
+  await room.getByRole("button", { name: "同意并进入语音面试" }).click();
+  for (let i = 2; i <= 5; i++) {
+    await expect(progress(i)).toBeVisible();
+    answer = `第${i}题：我负责文档切分，检索时保存课程讲义的段落编号，引用是否支持结论需要单独验证。`;
+    await voice.speak();
+  }
+
+  const archive = page.getByRole("region", { name: "面试详情" });
+  await expect(archive.getByRole("region", { name: "本场评分" })).toContainText("未评分");
+  await expect(page).toHaveURL(/#\/history\/examples\/[^/]+\/[^/]+$/);
+  const { roundId } = await (await page.request.get(endpoint)).json();
+  expect((await page.request.get("/api/me")).status()).toBe(401);
+  const revised = "测试输入：检索相似章节中的固定问题。预期结果：答案引用对应讲义段落。";
+  const retest = archive.getByRole("region", { name: "专项复测" });
+  await retest.getByLabel("补答").fill(revised);
+  await retest.getByRole("button", { name: "提交补答并对照" }).click();
+  await expect(retest.getByText("前后对照")).toBeVisible();
+
+  await page.goto("/#/history");
+  await page.getByRole("link", { name: /课程资料问答助手/ }).click();
+  await expect(page.getByText("专项复测已完成")).toBeVisible();
+  await page.getByRole("link", { name: "查看报告与对话" }).click();
+  await page.reload();
+  await expect(retest.getByText(revised, { exact: true })).toBeVisible();
+  await expect(archive.getByRole("region", { name: "完整对话" })).toContainText("这题我不会");
+  expect(privateHistoryReads).toBe(0);
+
+  const other = await browser.newContext();
+  try {
+    const origin = new URL(openUrl).origin;
+    expect(await (await other.request.get(origin + "/api/examples/practice-history")).json()).toEqual([]);
+    const response = await other.request.get(origin + endpoint + "?roundId=" + roundId);
+    expect(response.status()).toBe(404);
+  } finally {
+    await other.close();
+  }
 });
