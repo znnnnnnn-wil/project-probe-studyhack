@@ -251,4 +251,86 @@ class ProjectPracticeTest {
     assertEquals("ACTIVE", recovered.get("status"));
     assertFalse(recovered.containsKey("report"));
   }
+
+  @Test void newRoundsRevisitGapsAndRetireThemAfterAnIndependentAnswer() {
+    String user = id();
+    s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
+    var material = projects.save(user, null, Map.of("name", "合成任务调度", "stack", "RabbitMQ"));
+    String projectId = str(material, "id"), firstRound = id(), missed = id(), answered = id();
+    var original = Map.of("project", material, "modelMode", "live", "maxTurns", 2, "report", Map.of("mode", "live"),
+      "turns", List.of(
+        Map.of("id", missed, "topic", "ACK 前宕机恢复", "question", "说明 ACK 前进程宕机后的恢复流程。",
+          "answer", "请直接给我答案。", "explanation", "需要结合租约和重试。"),
+        Map.of("id", answered, "topic", "重复写入防护", "question", "如何避免相同任务重复写入？",
+          "answer", "使用任务 ID 唯一约束识别重复请求。",
+          "exchanges", List.of(Map.of("answer", "使用任务 ID 唯一约束识别重复请求。", "reply", "这一点说清楚了。")))));
+    s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,'COMPLETED',?)",
+      user, projectId, firstRound, 1, now(), s.encode(original));
+    var rejected = new java.util.concurrent.atomic.AtomicInteger();
+    var model = new ModelService(s, "live", "https://never-called.invalid", "synthetic", "synthetic", "test") {
+      @Override Map<String, Object> call(String rule, Object data) {
+        var input = PracticeRetest.object(data);
+        if (input.get("latestAnswer") instanceof String answer)
+          return Map.of("decision", "ADVANCE", "reply", "好的。", "evidence", answer, "answeredIndependently", true);
+
+        if (input.containsKey("candidate")) {
+          var candidate = PracticeRetest.object(input.get("candidate"));
+          if ("相同负载的写入保护".equals(candidate.get("topic"))) {
+            rejected.incrementAndGet();
+            assertTrue(rule.contains("以前独立答清"));
+            return Map.of("issues", List.of(Map.of("code", "REPEATED_GOAL", "reason", "仍在考相同任务的去重。")));
+          }
+          return Map.of("issues", List.of());
+        }
+
+        var history = list(input, "practiceHistory");
+        assertFalse(history.isEmpty());
+        assertTrue(history.stream().noneMatch(entry -> entry.containsKey("answer")));
+        var review = PracticeRetest.object(input.get("practiceReview"));
+        if (!review.isEmpty()) {
+          assertEquals(missed, review.get("id"));
+          assertEquals(PracticeRoundHistory.NEEDS_PRACTICE, review.get("outcome"));
+          return Map.of("topic", "消息确认与恢复", "question", "请说明工作进程在发出确认前退出时如何恢复任务。");
+        }
+        if (history.stream().anyMatch(entry -> missed.equals(entry.get("id"))
+            && PracticeRoundHistory.ANSWERED_INDEPENDENTLY.equals(entry.get("outcome"))))
+          return Map.of("topic", "部署配置", "question", "请说明任务进程的环境配置如何在部署时注入。");
+        assertTrue(history.stream().anyMatch(entry -> answered.equals(entry.get("id"))
+          && PracticeRoundHistory.ANSWERED_INDEPENDENTLY.equals(entry.get("outcome"))));
+        if (!input.containsKey("repair")) return Map.of("topic", "相同负载的写入保护",
+          "question", "请说明完全相同的任务再次投递时怎样防止插入两笔数据。");
+        return Map.of("topic", "任务监控", "question", "请说明用什么指标监控任务队列是否积压。");
+      }
+
+      @Override Map<String, Object> report(Map<String, Object> body) {
+        return Map.of("mode", "live", "findings", List.of(), "clearParts", List.of("说明了本轮的恢复流程。"));
+      }
+    };
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 2;
+    service.journey = practice.journey;
+
+    var second = service.run(user, projectId, Map.of("restart", true, "roundId", firstRound));
+    var reviewTurn = list(second, "turns").get(0);
+    assertEquals(missed, reviewTurn.get("reviewOf"));
+    assertEquals("ACK 前宕机恢复", reviewTurn.get("topic"));
+    assertTrue(PracticeRoundHistory.nextReview(Map.of("interviewTopic", "部署配置"), list(second, "practiceHistory")).isEmpty());
+    second = service.run(user, projectId, Map.of("turnId", reviewTurn.get("id"), "dialogue", true, "exchangeCount", 0,
+      "answer", "未确认的消息会重投，新的 Worker 会等旧租约到期再原子领取并恢复任务。"));
+    assertEquals(Boolean.TRUE, list(second, "turns").get(0).get("answeredIndependently"));
+    var newTurn = list(second, "turns").get(1);
+    assertEquals("任务监控", newTurn.get("topic"));
+    assertEquals(1, rejected.get());
+    second = service.run(user, projectId, Map.of("turnId", newTurn.get("id"), "dialogue", true, "exchangeCount", 0,
+      "answer", "我观察待消费消息数和最老消息的等待时间，以识别积压和恢复情况。"));
+    assertEquals("COMPLETED", second.get("status"));
+
+    var third = service.run(user, projectId, Map.of("restart", true, "roundId", second.get("roundId")));
+    assertEquals("部署配置", list(third, "turns").get(0).get("topic"));
+    assertTrue(list(third, "practiceHistory").stream().anyMatch(entry -> missed.equals(entry.get("id"))
+      && PracticeRoundHistory.ANSWERED_INDEPENDENTLY.equals(entry.get("outcome"))));
+    assertEquals(original.get("turns"), service.get(user, projectId, firstRound).get("turns"));
+    String otherProject = str(projects.save(user, null, Map.of("name", "其它项目")), "id");
+    assertFalse(practice.run(user, otherProject, Map.of()).containsKey("practiceHistory"));
+  }
 }
