@@ -261,6 +261,7 @@ class ProjectPractice {
           var reply = PracticeDialogue.decide(model, body, turn, utterance);
           var exchanges = list(turn, "exchanges");
           var exchange = new LinkedHashMap<String, Object>(Map.of("answer", utterance, "reply", reply.text()));
+          if (!reply.referenceAnswer().isBlank()) exchange.put(ExampleReference.FIELD, reply.referenceAnswer());
           if (reply.explained()) {
             exchange.put("explained", true);
             turn.put("explanation", reply.text());
@@ -309,6 +310,7 @@ class ProjectPractice {
   private static Map<String, Object> newTurn(ModelService.GeneratedQuestion question) {
     var turn = new LinkedHashMap<String, Object>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", ""));
     if (!question.reviewOf().isBlank()) turn.put("reviewOf", question.reviewOf());
+    if (!question.referenceAnswer().isBlank()) turn.put(ExampleReference.FIELD, question.referenceAnswer());
     return turn;
   }
 
