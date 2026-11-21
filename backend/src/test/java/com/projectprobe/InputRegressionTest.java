@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import java.io.*;
+import java.net.http.*;
 import java.nio.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -15,6 +16,8 @@ import org.apache.pdfbox.pdmodel.*;
 import org.apache.pdfbox.pdmodel.font.*;
 import org.apache.poi.xwpf.usermodel.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -848,6 +851,65 @@ class InputRegressionTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void speechTranscriptionIgnoresExhaustedQuotaWithoutGrowingCounter() throws Exception {
+    String user = user();
+    s.db.update(
+      "INSERT INTO input_limits(user_id,kind,window_start,attempts) VALUES (?,'SPEECH',?,?)",
+      user, now(), Integer.MAX_VALUE
+    );
+    var service = spy(new InputService(s, inputs.model));
+    doReturn(true).when(service).speechReady();
+    service.speechUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    service.speechModel = "qwen3-asr-flash";
+    service.speechKey = "synthetic-test-key";
+    var client = mock(HttpClient.class);
+    HttpResponse<String> response = mock(HttpResponse.class);
+    when(response.statusCode()).thenReturn(200);
+    when(response.body()).thenReturn(
+      "{\"choices\":[{\"message\":{\"content\":\"合成转写\"}}]}"
+    );
+    when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "client", client);
+    var audio = file("answer.wav", wav(16000, 1));
+    for (int i = 0; i < 101; i++) {
+      assertEquals("合成转写", service.transcribe(user, audio).get("text"));
+    }
+    verify(client, times(101)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+    var row = s.one("SELECT * FROM input_limits WHERE user_id=? AND kind='SPEECH'", user);
+    assertEquals(Integer.MAX_VALUE, ((Number) row.get("attempts")).intValue());
+    assertEquals(0L, ((Number) row.get("lease_until")).longValue());
+    assertNull(row.get("lease_token"));
+  }
+
+  @Test
+  void unlimitedSpeechReleasesFailedLeaseWithoutCountingAttempts() {
+    String user = user();
+    assertThrows(IllegalStateException.class, () ->
+      inputs.limited(user, "SPEECH", 0, () -> { throw new IllegalStateException(); })
+    );
+    assertEquals("ok", inputs.limited(user, "SPEECH", 0, () -> "ok"));
+    var row = s.one("SELECT * FROM input_limits WHERE user_id=? AND kind='SPEECH'", user);
+    assertEquals(0, ((Number) row.get("attempts")).intValue());
+    assertEquals(0L, ((Number) row.get("lease_until")).longValue());
+    assertNull(row.get("lease_token"));
+  }
+
+  @Test
+  void unlimitedSpeechStillRespectsGlobalConcurrency() {
+    String user = user();
+    assertTrue(inputs.slots.tryAcquire(2));
+    try {
+      assertEquals(429, assertThrows(ResponseStatusException.class, () ->
+        inputs.limited(user, "SPEECH", 0, () -> "unreachable")
+      ).getStatusCode().value());
+    } finally {
+      inputs.slots.release(2);
+    }
+    assertEquals("ok", inputs.limited(user, "SPEECH", 0, () -> "ok"));
+  }
+
+  @Test
   void limitsCallsAndReleasesFailedLease() {
     String user = user();
     assertThrows(IllegalStateException.class, () ->
@@ -877,15 +939,16 @@ class InputRegressionTest {
     );
   }
 
-  @Test
-  void concurrentSameUserCannotObtainTwoLeases() throws Exception {
+  @ParameterizedTest
+  @ValueSource(ints = {0, 10})
+  void concurrentSameUserCannotObtainTwoLeases(int limit) throws Exception {
     String user = user();
     var entered = new CountDownLatch(1);
     var exit = new CountDownLatch(1);
     var pool = Executors.newSingleThreadExecutor();
     try {
       var first = pool.submit(() ->
-        inputs.limited(user, "TEST", 10, () -> {
+        inputs.limited(user, "TEST", limit, () -> {
           entered.countDown();
           try {
             exit.await(5, TimeUnit.SECONDS);
@@ -899,7 +962,7 @@ class InputRegressionTest {
       assertEquals(
         409,
         assertThrows(ResponseStatusException.class, () ->
-          inputs.limited(user, "TEST", 10, () -> "no")
+          inputs.limited(user, "TEST", limit, () -> "no")
         )
           .getStatusCode()
           .value()
@@ -912,12 +975,13 @@ class InputRegressionTest {
     }
   }
 
-  @Test
-  void staleLeaseCannotReturnOrClearNewOwner() {
+  @ParameterizedTest
+  @ValueSource(ints = {0, 10})
+  void staleLeaseCannotReturnOrClearNewOwner(int limit) {
     String user = user();
     String newToken = id();
     assertThrows(ResponseStatusException.class, () ->
-      inputs.limited(user, "TEST", 10, () -> {
+      inputs.limited(user, "TEST", limit, () -> {
         s.db.update(
           "UPDATE input_limits SET lease_token=? WHERE user_id=? AND kind='TEST'",
           newToken,
