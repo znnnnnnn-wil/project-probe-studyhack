@@ -98,8 +98,8 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
   }, [projectId, value.report, value.roundId]);
   const questionId = turn?.id;
   const exchanges = turn?.exchanges || [];
-  const pendingExchange = value.pendingExchange;
-  const hasDraft = live && !submitted && !pendingExchange && !!answer.trim();
+  const pendingExchange = value.pendingExchange || (pending && answer.trim() ? { answer } : undefined);
+  const hasDraft = live && !submitted && !value.pendingExchange && !!answer.trim();
   const prompt = exchanges.at(-1)?.reply || turn?.question || "";
   const promptKey = questionId + ":" + exchanges.length;
   const handleAutoListening = useCallback((active: boolean) => {
@@ -110,9 +110,9 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     }
   }, [promptKey, stop]);
   const voiceReadyForPrompt = voiceReady !== null && voiceReady.turnId === questionId && voiceReady.exchangeCount === exchanges.length;
-  const playbackAllowed = live && handsFree && sound && speechSupported && !cancelling;
+  const playbackAllowed = live && value.status === "ACTIVE" && handsFree && sound && speechSupported && !cancelling;
   const needsPlayback = playbackAllowed && voiceReadyForPrompt && !waiting && !loadError && !autoListening && !autoProcessing &&
-    value.status === "ACTIVE" && spokenPrompt.current !== promptKey;
+    spokenPrompt.current !== promptKey;
   useLayoutEffect(() => {
     if (!needsPlayback || !questionId) return;
     spokenPrompt.current = promptKey;
@@ -316,7 +316,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
             <small id="practice-voice-consent">{voiceConsent}</small>
           </div>
         ) : voiceUnavailable)}
-        {hasDraft && !loadError && <section className="practice-draft" aria-label={staleDraft ? "旧追问的回答草稿" : "未发送的回答"}>
+        {hasDraft && !waiting && !loadError && <section className="practice-draft" aria-label={staleDraft ? "旧追问的回答草稿" : "未发送的回答"}>
           <h4>{staleDraft ? "旧追问的回答草稿" : "未发送的回答"}</h4>
           <p>{answer}</p>
           {staleDraft ? (

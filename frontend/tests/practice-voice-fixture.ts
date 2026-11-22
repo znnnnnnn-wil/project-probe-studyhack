@@ -83,7 +83,8 @@ export async function mockPracticeVoice(page: Page, transcript: () => string) {
   await page.route("**/api/config", route => route.fulfill({
     json: { modelMode: "demo", speechEnabled: true, ttsEnabled: false },
   }));
-  await page.route("**/api/projects/*/practice/transcribe", route => route.fulfill({ json: { text: transcript() } }));
+  await page.route(/\/api\/(?:examples\/)?projects\/[^/]+\/practice\/transcribe$/, route =>
+    route.fulfill({ json: { text: transcript() } }));
   return {
     async speak() {
       await expect.poll(voice.micState).toEqual(["live", true]);

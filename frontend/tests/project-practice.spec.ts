@@ -495,3 +495,61 @@ test("免提面试播报时可开口打断，问候留在同一题", async ({ pa
   await expect(page.locator("#project-materials, #project-practice, dialog.practice-room")).toHaveCount(0);
   await expect.poll(voice.micState).toEqual(["ended", false]);
 });
+
+for (const width of [1440, 390]) test(`语音正常提交隐藏草稿卡片，失败仍可恢复 ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  const id = "77777777-7777-4777-8777-777777777777";
+  const path = `/api/projects/${id}/practice`;
+  const text = "服务端会先持久化请求标识，重复消息读取原结果。";
+  const turn = { id: "draft-turn", question: "请说明重复请求的处理方式。", answer: "" };
+  let state = { status: "ACTIVE", roundId: "draft-round", maxTurns: 5, turns: [turn] };
+  let release!: () => void;
+  let submissions = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/**", async route => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === path && request.method() === "POST") {
+      submissions++;
+      expect(request.postDataJSON().answer).toBe(text);
+      if (submissions === 1) {
+        await gate;
+        return route.fulfill({ status: 503, json: { message: "合成提交失败" } });
+      }
+      state = { ...state, turns: [{ ...turn, answer: text }, { id: "next-turn", question: "请说明故障恢复。", answer: "" }] };
+      return route.fulfill({ json: state });
+    }
+    const responses: Record<string, unknown> = {
+      "/api/config": { speechEnabled: true, ttsEnabled: false },
+      "/api/me": { id: "synthetic", username: "草稿验证" },
+      [`/api/projects/${id}`]: { id, name: "语音草稿验证" },
+      [path]: state,
+      [path + "/transcribe"]: { text },
+    };
+    return route.fulfill({ json: responses[pathname] ?? null });
+  });
+  const voice = await mockHandsFree(page);
+  await page.goto(`/#/projects/${id}?interview=1`);
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const draft = room.getByRole("region", { name: "未发送的回答" });
+  await room.getByRole("button", { name: "同意并进入语音面试", exact: true }).click();
+  await expect.poll(voice.micState).toEqual(["live", true]);
+  await voice.beginSpeech();
+  await voice.endSpeech();
+  await expect.poll(() => submissions).toBe(1);
+  await expect(room.getByRole("region", { name: "本题对话" })).toContainText(text);
+  await expect(draft).toHaveCount(0);
+  await expect(room.getByText("未发送的回答已保存在当前标签页。", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(project => sessionStorage.getItem("practice-draft:" + project), id)).toBe(text);
+  release();
+  await expect(draft).toContainText(text);
+  await expect(draft.getByRole("button", { name: "重试发送", exact: true })).toBeEnabled();
+  page.on("dialog", dialog => dialog.accept());
+  await page.reload();
+  await expect(draft).toContainText(text);
+  await draft.getByRole("button", { name: "重试发送", exact: true }).click();
+  await expect(room.getByRole("heading", { name: "请说明故障恢复。", exact: true })).toBeVisible();
+  await expect(draft).toHaveCount(0);
+  expect(submissions).toBe(2);
+  expect(await page.evaluate(project => sessionStorage.getItem("practice-draft:" + project), id)).toBeNull();
+});
