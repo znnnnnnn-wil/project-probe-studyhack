@@ -11,9 +11,13 @@ final class PracticeScoring {
     四个维度各恰好一项：clarity 评价表达是否直接回应问题、有清楚结构；ownership 评价是否区分个人和团队职责、说清个人贡献；depth 评价是否解释实现机制、取舍与边界；validation 评价是否给出具体验证步骤、预期与观察结果。
     只按本轮实际回答评分。答题中未涉及此维度时填 level=null、turnIds=[]、evidenceQuote=""，reason 说明缺少什么。不能把未被问到的内容扣分。
     其余情况，各维度按同一标尺：0=涉及但明确答不出或完全偏离；1=只有笼统结论；2=有具体信息但缺少关键说明；3=回答到核心且有合理细节；4=说明完整且有明确例子、因果或边界；5=信息完整、关键判断有具体依据且可核对。
-    reason 用简体中文，最多120字，具体说明该维度从回答看到了什么或还欠什么，不根据材料或提问前提推断用户已实现、已验证。turnIds 从 allowedTurnIds 逐字选取一至两条已完成回答的 T 编号，evidenceQuote 逐字复制首个引用回答的连续原文片段，最多240字。不要返回总分。
-    数字评分必须带原文片段 evidenceQuote，即使复盘正文没有引用原文。
+    reason 用简体中文，最多120字，说明该维度看到了什么或还欠什么。turnIds 从 allowedTurnIds 选一至两条已完成回答的 T 编号。
+    每个有数字评分的条目都必须带 evidenceQuote。找到 answeredTurns 中 id 对应 turnIds[0] 的条目，从它的 answer 字符串中逐字复制一段连续原文（建议取短句，最多240字）。保留原标点与空格。不要引用题目、材料或改写后的总结。不要返回总分。
     """;
+
+  static boolean appliesTo(Map<String, Object> body) {
+    return "PRACTICE".equals(body.get("kind")) || "TRIAL".equals(body.get("kind"));
+  }
 
   static boolean hasScore(Map<String, Object> scoring) {
     return scoring.get("dimensions") instanceof List<?> dimensions && dimensions.stream()

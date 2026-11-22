@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Button, Loading } from "./ui";
 import type { Actions } from "./ui";
 import { useProjectPractice } from "./use-project-practice";
-import { ArrowLeft, ArrowRight, Camera, CameraOff, FolderOpen, MessageSquare, Mic, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, CameraOff, FolderOpen, LoaderCircle, MessageSquare, Mic, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import "./project-practice.css";
 import type { Project } from "./types";
 import { PracticeConversationVoice } from "./practice-conversation-voice";
@@ -32,7 +32,7 @@ export function ProjectInterview({ id, fromHistory, ...props }: Actions & { id: 
 function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: Actions & {
   projectId: string; project: Project; exitLabel: string; onExit: () => void;
 }) {
-  const { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, load, submit, cancel } = useProjectPractice(projectId);
+  const { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, finalTurn, reportGenerating, load, submit, cancel } = useProjectPractice(projectId);
   const [topic, setTopic] = useState("");
   const activeRound = useRef<string | undefined>(undefined);
   const [voiceAccepted, setVoiceAccepted] = useState(false);
@@ -51,8 +51,12 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
   const turn = value.turns?.at(-1);
   const waiting = pending || ["LOADING", "GENERATING"].includes(value.status);
   const live = !!turn && !value.report;
+  const finishing = live && finalTurn && waiting && !loadError && !cancelling;
+  const showingReportProgress = finishing && reportGenerating;
+  const reportNeedsRetry = live && finalTurn && submitted && value.status === "FAILED";
   const canUseVoiceRoom = !!mediaConfig?.speechEnabled;
   const handsFree = voiceAccepted && canUseVoiceRoom;
+  const startBlocked = busy || waiting || cancelling || loadError || value.retest?.status === "GENERATING";
   const closeRoom = () => {
     camera.stop();
     stop();
@@ -68,7 +72,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     setVoiceAccepted(true);
   };
   const startInterview = () => {
-    if (!canUseVoiceRoom || busy || waiting || loadError || value.retest?.status === "GENERATING") return;
+    if (startBlocked || !canUseVoiceRoom) return;
     enableVoice();
     void run(() => submit(undefined, !!value.report, topic));
   };
@@ -126,13 +130,15 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
   }, [questionId, exchanges.length, pendingExchange]);
   const listening = autoListening || face.speaking;
-  const thinking = !loadError && (pending || value.status === "GENERATING");
+  const thinking = !showingReportProgress && !loadError && (pending || value.status === "GENERATING");
   const avatarState = speaking ? "speaking" : thinking ? "thinking" : listening ? "listening" : "idle";
-  const avatarStatus = speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
-  const action = <Button disabled={busy || autoProcessing || cancelling || (!loadError && (waiting || (hasDraft && answer.length > 3000)))} onClick={() => {
+  const avatarStatus = showingReportProgress ? "面试已结束" : finishing ? "正在处理最后一题" :
+    speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
+  const action = <Button disabled={busy || cancelling || autoProcessing || (!loadError && (waiting || (!canUseVoiceRoom && !reportNeedsRetry) || (hasDraft && answer.length > 3000)))} onClick={() => {
     if (loadError) void load(); else void run(() => submit());
   }}>
-    {loadError ? "重新读取训练状态" : waiting ? "正在生成，自动恢复进度…" : hasDraft ? "重试发送" : "重试或恢复训练"}<ArrowRight size={16} />
+    {loadError ? "重新读取训练状态" : waiting ? "正在生成，自动恢复进度…" : hasDraft ? "重试发送" :
+      reportNeedsRetry ? "重试生成报告" : "重试或恢复训练"}<ArrowRight size={16} />
   </Button>;
   const voiceUnavailable = checkingVoice ? <p role="status">正在检查语音服务…</p> : <>
     <p role="status">百炼 ASR 暂未就绪，当前无法开始语音面试。</p>
@@ -150,9 +156,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     {answeredTurns.map(t => <article key={t.id}><h4>{t.question}</h4><p style={{ whiteSpace: "pre-wrap" }}>{t.answer}</p></article>)}
   </details>;
   const messages = <>
-    {waiting && submitted && !value.report && value.turns?.length === value.maxTurns &&
-      <p className="practice-footnote" role="status">已提交全部回答，正在生成本场报告。</p>}
-    {notice && <p className="practice-footnote" role="status">{notice}</p>}
+    {notice && !waiting && <p className="practice-footnote" role="status">{notice}</p>}
     {live && error && <p className="practice-error" role="alert">{error}</p>}
   </>;
   return <dialog
@@ -212,7 +216,15 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
             <ArrowLeft size={16} aria-hidden="true" />{exitLabel}
           </Button>
         </header>
-        {!live ? (
+        {showingReportProgress ? (
+          <section className="practice-question practice-report-loading" role="status">
+            <LoaderCircle className="spin" size={28} aria-hidden="true" />
+            <div>
+              <h3>正在生成面试报告</h3>
+              <p>回答已保存，报告完成后会自动打开。</p>
+            </div>
+          </section>
+        ) : !live ? (
           <>
           <section className="practice-project-info" aria-label="项目相关信息">
             <div className="practice-project-info-head">
@@ -233,7 +245,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
           <section className="practice-question practice-setup">
             <h3>{value.report ? "开始新一轮" : "开始项目面试"}</h3>
             {error && <p className="practice-error" role="alert">{error}</p>}
-            {loadError || value.status === "GENERATING" || (value.status === "FAILED" && value.roundId && !value.report) ? action : <>
+            {loadError || value.status === "GENERATING" ? action : <>
               {(!value.roundId || value.report) && <label>
                 面试主题（选填）
                 <input value={topic} maxLength={200} disabled={busy || waiting}
@@ -243,7 +255,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
               </label>}
               {canUseVoiceRoom ? <>
                 <button type="button" className="button" aria-describedby="practice-voice-consent"
-                  disabled={busy || waiting || value.retest?.status === "GENERATING"} onClick={startInterview}>
+                  disabled={startBlocked} onClick={startInterview}>
                   <Mic size={16} aria-hidden="true" />
                   {waiting ? "正在准备…" : value.status === "FAILED" && !value.report
                     ? "重试或恢复训练" : "同意并开始语音面试"}
@@ -262,7 +274,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
             <div className="question-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, ((value.turns?.length || 1) / (value.maxTurns || 1)) * 100)}%` }} /></div>
           </div>}
         </div>}
-        {live && (exchanges.length > 0 || pendingExchange) && (
+        {live && !showingReportProgress && (exchanges.length > 0 || pendingExchange) && (
           <section className="practice-dialogue" aria-label="本题对话">
             <h3>本题对话</h3>
             <ol className="practice-dialogue-messages" ref={transcript} aria-live="polite">
@@ -276,7 +288,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
             </ol>
           </section>
         )}
-        {handsFree && <PracticeConversationVoice
+        {handsFree && !showingReportProgress && <PracticeConversationVoice
               projectId={projectId}
               turnId={live ? turn?.id ?? "" : ""}
               exchangeCount={exchanges.length}
@@ -295,7 +307,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
         {!handsFree && value.roundId && !value.report && <Button secondary disabled={cancelling}
           onClick={() => void cancelInterview()}>{cancelling ? "正在取消…" : "取消语音面试"}</Button>}
         {live && (loadError || (value.status === "FAILED" && !hasDraft)) && action}
-        {live && !handsFree && !loadError && (canUseVoiceRoom ? value.status === "ACTIVE" && !hasDraft && (
+        {live && !showingReportProgress && !handsFree && !loadError && (canUseVoiceRoom ? value.status === "ACTIVE" && !hasDraft && (
           <div className="practice-voice-consent">
             <button type="button" className="button" aria-describedby="practice-voice-consent"
               disabled={busy || waiting} onClick={enableVoice}>

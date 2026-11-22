@@ -210,6 +210,33 @@ class ProjectPracticeTest {
     assertEquals(2, calls.get());
   }
 
+  @Test void retriesInvalidInlineScoresSeparatelyAndKeepsFeedbackIfScoringIsUnavailable() {
+    String answer = "我负责预约接口，用唯一键防重复，再用并发请求核对结果。";
+    var dimensions = List.of("clarity", "ownership", "depth", "validation");
+    for (boolean recovers : List.of(true, false)) {
+      var calls = new java.util.concurrent.atomic.AtomicInteger();
+      var model = new ModelService(s, "live", "https://never-called.invalid", "synthetic", "synthetic", "test") {
+        @Override Map<String, Object> call(String rule, Object input) {
+          boolean scoreOnly = calls.incrementAndGet() == 2;
+          assertEquals(scoreOnly, rule.startsWith("只为这场项目面试补生成评分"));
+          var scores = dimensions.stream().map(key -> Map.of("key", key, "level", 4,
+            "reason", "结合回答中的说明。", "turnIds", List.of("T1"),
+            "evidenceQuote", scoreOnly && recovers ? answer : "我负责一个没有在回答中出现的功能")).toList();
+          return scoreOnly ? Map.of("practiceScores", scores) : Map.of("practiceScores", scores,
+            "clearParts", List.of("描述了预约流程。"), "findings", List.of(), "retestTopics", List.of());
+        }
+      };
+      var body = new LinkedHashMap<String, Object>(Map.of("kind", "PRACTICE",
+        "project", new LinkedHashMap<String, Object>(),
+        "turns", List.of(Map.of("id", "answered", "question", "怎样实现预约？", "answer", answer))));
+      var report = model.report(body);
+      assertEquals(List.of("描述了预约流程。"), report.get("clearParts"));
+      assertEquals(2, calls.get());
+      assertEquals(recovers, report.containsKey("scoring"));
+      if (recovers) assertEquals(80, PracticeRetest.object(report.get("scoring")).get("total"));
+    }
+  }
+
   @Test void expiredQuestionLeaseCanRecoverWithoutGeneratingAnEmptyReport() {
     String user = id(); s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
     var p = projects.save(user, null, Map.of("name", "合成恢复项目", "responsibility", "接口"));
