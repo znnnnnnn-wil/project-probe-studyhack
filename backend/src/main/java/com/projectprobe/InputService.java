@@ -47,9 +47,6 @@ public class InputService {
   @Value("${app.speech-key:}")
   String speechKey;
 
-  @Value("${app.speech-daily-limit:20}")
-  int speechDailyLimit;
-
   InputService(Store s, ModelService model) {
     this.s = s;
     this.model = model;
@@ -130,14 +127,14 @@ public class InputService {
           start = time;
           attempts = 0;
         }
-        if (attempts >= limit) throw error(
+        if (limit > 0 && attempts >= limit) throw error(
           429,
           "本账号当前24小时的识别次数已用完"
         );
         s.db.update(
           "UPDATE input_limits SET window_start=?,attempts=?,lease_until=?,lease_token=? WHERE user_id=? AND kind=?",
           start,
-          attempts + 1,
+          limit > 0 ? attempts + 1 : attempts,
           time + 90000,
           token,
           user,
@@ -294,7 +291,7 @@ public class InputService {
     return limited(
       user,
       "SPEECH",
-      Math.max(1, Math.min(speechDailyLimit, 100)),
+      0,
       () -> {
         var body = Map.of(
           "model",
