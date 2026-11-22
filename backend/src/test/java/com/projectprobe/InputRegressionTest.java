@@ -1138,4 +1138,97 @@ class InputRegressionTest {
     mvc.perform(multipart(url).file(recording).param("turnId", turnId).cookie(ownerCookie).header("Origin", origin))
       .andExpect(status().isConflict());
   }
+
+  @Test
+  void practiceTtsTeachesWithinTheCurrentTurnUntilLearningIsConfirmed() {
+    String user = user();
+    String project = str(projects.save(user, null, Map.of("name", "合成项目", "responsibility", "我负责接口")), "id");
+    var service = new ProjectPractice(s, projects, practice.model);
+    service.maxTurns = 2;
+    service.journey = practice.journey;
+    var state = service.run(user, project, Map.of());
+    var first = list(state, "turns").get(0);
+    String firstId = str(first, "id");
+    assertEquals(first.get("question"), service.speechPrompt(user, project, firstId, 0));
+    state = service.run(user, project, Map.of("turnId", firstId, "dialogue", true, "exchangeCount", 0, "answer", "不会"));
+    assertEquals(1, list(state, "turns").size());
+    String explanation = str(list(state, "turns").get(0), "explanation");
+    assertEquals(explanation, service.speechPrompt(user, project, firstId, 1));
+    assertEquals(explanation, service.speechPrompt(user, project, firstId, null));
+    assertEquals(firstId, service.requireUnansweredTurn(user, project, firstId, 1).get("id"));
+    for (Object staleCount : List.of(0, -1, 0.5, "1"))
+      assertEquals(409, assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, firstId, staleCount)).getStatusCode().value());
+    assertEquals(404, assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user(), project, firstId, 1)).getStatusCode().value());
+
+    var speech = spy(new InterviewSpeech(s, inputs.model, inputs, service));
+    speech.dailyLimit = 2;
+    doReturn(true).when(speech).ttsReady();
+    doNothing().when(speech).synthesize(anyString(), any());
+    var response = new org.springframework.mock.web.MockHttpServletResponse();
+    speech.speak(user, project, firstId, 1, response);
+    verify(speech).synthesize(explanation, response);
+    assertEquals(state, service.get(user, project));
+
+    state = service.run(user, project, Map.of("turnId", firstId, "dialogue", true, "exchangeCount", 1, "answer", "我学会了"));
+    var next = list(state, "turns").get(1);
+    String nextId = str(next, "id");
+    assertEquals(next.get("question"), service.speechPrompt(user, project, nextId, 0));
+    assertFalse(next.containsKey("explanation"));
+    assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, firstId, 2));
+    state = service.run(user, project, Map.of("turnId", nextId, "dialogue", true, "exchangeCount", 0, "answer", "求答案"));
+    assertEquals("ACTIVE", state.get("status"));
+    String finalExplanation = str(list(state, "turns").get(1), "explanation");
+    assertEquals(finalExplanation, service.speechPrompt(user, project, nextId, 1));
+    var finalResponse = new org.springframework.mock.web.MockHttpServletResponse();
+    speech.speak(user, project, nextId, 1, finalResponse);
+    verify(speech).synthesize(finalExplanation, finalResponse);
+    assertEquals(429, assertThrows(ResponseStatusException.class, () -> speech.speak(user, project, nextId, 1, response)).getStatusCode().value());
+    state = service.run(user, project, Map.of("turnId", nextId, "dialogue", true, "exchangeCount", 1, "answer", "明白了"));
+    assertEquals("COMPLETED", state.get("status"));
+    assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, nextId, 2));
+    assertThrows(ResponseStatusException.class, () -> service.requireUnansweredTurn(user, project, nextId, 2));
+    service.run(user, project, Map.of("restart", true, "roundId", state.get("roundId")));
+    assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, nextId, null));
+  }
+
+  @Test
+  void completedPracticeWithoutTeachingAndFailedGenerationCannotBeSpoken() {
+    String user = user();
+    String project = str(projects.save(user, null, Map.of("name", "合成项目", "responsibility", "我负责接口")), "id");
+    var service = new ProjectPractice(s, projects, practice.model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    var state = service.run(user, project, Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    state = service.run(user, project, Map.of("turnId", turnId, "answer", "接口使用唯一键。"));
+    assertEquals("COMPLETED", state.get("status"));
+    assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, turnId, 0));
+    list(state, "turns").get(0).put("explanation", "仅用于测试的讲解");
+    for (String status : List.of("FAILED", "GENERATING", "CANCELLED")) {
+      s.db.update("UPDATE project_practice_rounds SET status=?,body=?,lease_until=? WHERE user_id=? AND round_id=?",
+        status, s.encode(state), now() + 90000, user, state.get("roundId"));
+      assertEquals(409, assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, turnId, 0)).getStatusCode().value());
+    }
+  }
+
+  @Test
+  void ttsAccepts650ServerCharactersButRejectsOversizedTextWithoutChargingQuota() {
+    String user = user(), project = id(), turn = id();
+    var service = mock(ProjectPractice.class);
+    var speech = spy(new InterviewSpeech(s, inputs.model, inputs, service));
+    speech.dailyLimit = 1;
+    doReturn(true).when(speech).ttsReady();
+    doNothing().when(speech).synthesize(anyString(), any());
+    var response = new org.springframework.mock.web.MockHttpServletResponse();
+    String text = "讲".repeat(650);
+    when(service.speechPrompt(user, project, turn, 0)).thenReturn(text);
+    speech.speak(user, project, turn, 0, response);
+    verify(speech).synthesize(text, response);
+    for (String invalid : List.of("讲".repeat(651), " ")) {
+      when(service.speechPrompt(user, project, turn, 0)).thenReturn(invalid);
+      assertEquals(409, assertThrows(ResponseStatusException.class, () -> speech.speak(user, project, turn, 0, response)).getStatusCode().value());
+    }
+    assertEquals(1, s.db.queryForObject("SELECT attempts FROM input_limits WHERE user_id=? AND kind='TTS'", Integer.class, user));
+    verify(speech, times(1)).synthesize(anyString(), any());
+  }
 }
