@@ -189,6 +189,8 @@ class ProjectPractice {
         roundId = id();
         current = new LinkedHashMap<>(Map.of("project", project, "kind", "PRACTICE", "turns", new ArrayList<>(), "modelMode", model.mode, "maxTurns", maxTurns));
         if (!interviewTopic.isBlank()) current.put("interviewTopic", interviewTopic);
+        var history = PracticeRoundHistory.load(s, user, projectId, model.mode);
+        if (!history.isEmpty()) current.put("practiceHistory", history);
         s.db.update(
           "INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
           user, projectId, roundId, roundNumber, now(), "PENDING", s.encode(current)
@@ -242,8 +244,7 @@ class ProjectPractice {
     try {
       var turns = list(body, "turns");
       if (turns.isEmpty()) {
-        var question = model.firstDeepQuestion(body);
-        turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
+        turns.add(newTurn(model.firstDeepQuestion(body)));
       } else {
         var turn = turns.get(turns.size() - 1);
         var pending = PracticeRetest.object(body.get("pendingExchange"));
@@ -274,8 +275,7 @@ class ProjectPractice {
         }
         if (!str(turn, "answer").isBlank()) {
           if (turns.size() < ((Number) body.getOrDefault("maxTurns", 1)).intValue()) {
-            var question = model.question(body);
-            turns.add(new LinkedHashMap<>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", "")));
+            turns.add(newTurn(model.question(body)));
           } else body.put("report", model.report(body));
         }
       }
@@ -300,6 +300,12 @@ class ProjectPractice {
   }
 
   private record Generation(String roundId, Map<String, Object> body) {}
+
+  private static Map<String, Object> newTurn(ModelService.GeneratedQuestion question) {
+    var turn = new LinkedHashMap<String, Object>(Map.of("id", id(), "question", question.question(), "topic", question.topic(), "answer", ""));
+    if (!question.reviewOf().isBlank()) turn.put("reviewOf", question.reviewOf());
+    return turn;
+  }
 
   private void requireLease(String user, String roundId, String token) {
     var row = s.one("SELECT lease_token,lease_until FROM project_practice_rounds WHERE user_id=? AND round_id=?", user, roundId);
