@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { demoProject } from "../src/api";
 
-test("按项目归档每场面试，旧空评分可补生成并跳到原对话", async ({ page }) => {
+test("按项目归档每场面试，补生成的部分评分可查看、导出并跳到原对话", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   const projectId = "timeflow";
   const completedId = "completed-session";
@@ -18,7 +19,7 @@ test("按项目归档每场面试，旧空评分可补生成并跳到原对话",
     { ...base, roundId: activeId, roundNumber: 2, status: "ACTIVE", answeredCount: 0, interviewTopic: "重复请求", prioritySuggestion: "" },
     {
       ...base, roundId: completedId, roundNumber: 1, status: "COMPLETED", answeredCount: 5,
-      interviewTopic: "语音录入", totalScore: 85, hasScoring: true, prioritySuggestion: suggestion,
+      interviewTopic: "语音录入", prioritySuggestion: suggestion,
     },
     { ...base, projectId: "another-project", name: "另一个项目", roundId: "other-session", roundNumber: 1, status: "ACTIVE", answeredCount: 0, interviewTopic: "", prioritySuggestion: "" },
   ];
@@ -33,10 +34,10 @@ test("按项目归档每场面试，旧空评分可补生成并跳到原对话",
     exchanges: [{ answer: firstAnswer, reply: followUp }, { answer: nextAnswer, reply: "" }],
   };
   const scoreDimensions = [
-    { key: "clarity", score: 25, reason: "说明了请求链路。", turnIds: [turn.id] },
-    { key: "ownership", score: 25, reason: "说明了本人职责。", turnIds: [turn.id] },
-    { key: "depth", score: 20, reason: "说明了请求查重。", turnIds: [turn.id] },
-    { key: "validation", score: 15, reason: "给出了验证方法。", turnIds: [turn.id] },
+    { key: "clarity", score: 15, reason: "说明了请求链路。", turnIds: [turn.id] },
+    { key: "ownership", score: null, reason: "未说明本人职责。", turnIds: [] },
+    { key: "depth", score: 10, reason: "说明了请求查重。", turnIds: [turn.id] },
+    { key: "validation", score: 5, reason: "给出了验证方法。", turnIds: [turn.id] },
   ];
   let scoreGenerated = false;
   let archiveReads = 0;
@@ -45,7 +46,10 @@ test("按项目归档每场面试，旧空评分可补生成并跳到原对话",
     let json: unknown;
     if (url.pathname === "/api/config") json = { modelMode: "live" };
     else if (url.pathname === "/api/me") json = { id: "synthetic", username: "训练记录验证" };
-    else if (url.pathname === "/api/practice-history") json = history;
+    else if (url.pathname === "/api/practice-history") json = history.map(record =>
+      scoreGenerated && record.roundId === completedId
+        ? { ...record, totalScore: 40, hasScoring: true, scoredDimensions: 3 }
+        : record);
     else if (url.pathname === "/api/examples/practice-history") json = [example];
     else if (url.pathname === "/api/training-projects") json = [];
     else if (url.pathname === "/api/training-page") json = { items: [], total: 0, offset: 0, limit: 20, hasMore: false };
@@ -72,7 +76,7 @@ test("按项目归档每场面试，旧空评分可补生成并跳到原对话",
               materials: [], turnIds: [turn.id], factIds: [],
             }],
             scoring: {
-              total: scoreGenerated ? 85 : null,
+              total: scoreGenerated ? 40 : null,
               dimensions: scoreGenerated ? scoreDimensions : scoreDimensions.map(({ key }) => ({
                 key, score: null, reason: "本项暂缺可核对的回答依据。", turnIds: [],
               })),
@@ -120,10 +124,16 @@ test("按项目归档每场面试，旧空评分可补生成并跳到原对话",
   const scoring = page.getByRole("region", { name: "本场评分" });
   await expect(scoring.getByText("暂无有效评分", { exact: true })).toBeVisible();
   await scoring.getByRole("button", { name: "补生成评分" }).click();
-  await expect(scoring.getByText(/85\s*\/\s*100/)).toBeVisible();
+  await expect(scoring.getByText(/综合分\s*40\s*\/\s*100/)).toBeVisible();
+  await expect(scoring.getByText("3 / 4 项已评分", { exact: true })).toBeVisible();
+  await expect(scoring.getByText("未覆盖", { exact: true })).toBeVisible();
+  const exportReady = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出本轮复盘" }).click();
+  const exported = await exportReady;
+  expect(await readFile(await exported.path(), "utf8")).toContain("综合分 40 / 100 · 3 / 4 项已评分");
   await page.reload();
   await expect(scoring.getByText("给出了验证方法。", { exact: true })).toBeVisible();
-  await expect(scoring.getByText(/85\s*\/\s*100/)).toBeVisible();
+  await expect(scoring.getByText(/综合分\s*40\s*\/\s*100/)).toBeVisible();
   await expect(conversation.getByText(nextAnswer, { exact: true })).toBeHidden();
   await scoring.getByRole("button", { name: "查看第 1 题对话" }).last().click();
   await expect(conversation).toBeFocused();
@@ -131,6 +141,8 @@ test("按项目归档每场面试，旧空评分可补生成并跳到原对话",
   await expect(page.getByText(followUp, { exact: true })).toBeVisible();
   await expect(conversation.getByText(nextAnswer, { exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.getByRole("link", { name: "返回项目训练记录" }).click();
+  await expect(page.getByText("综合分 40 / 100 · 3 / 4 项已评分", { exact: true })).toBeVisible();
 });
 
 test("训练记录分页、服务端筛选与展开后读取原问答", async ({ page }) => {

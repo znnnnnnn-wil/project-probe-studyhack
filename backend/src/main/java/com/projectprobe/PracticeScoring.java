@@ -5,6 +5,9 @@ import java.util.*;
 
 final class PracticeScoring {
   private static final List<String> DIMENSIONS = List.of("clarity", "ownership", "depth", "validation");
+  private static final int POINTS_PER_DIMENSION = 25;
+
+  record Summary(Integer total, int scoredDimensions) {}
 
   static final String RULE = """
     在 JSON 根对象中返回 practiceScores 数组，每项为 {key:string,level:0至5的整数或null,reason:string,turnIds:string[],evidenceQuote:string}。
@@ -20,8 +23,22 @@ final class PracticeScoring {
   }
 
   static boolean hasScore(Map<String, Object> scoring) {
-    return scoring.get("dimensions") instanceof List<?> dimensions && dimensions.stream()
-      .anyMatch(dimension -> dimension instanceof Map<?, ?> item && item.get("score") instanceof Number);
+    return summarize(scoring).scoredDimensions() > 0;
+  }
+
+  static Summary summarize(Map<String, Object> scoring) {
+    int points = 0;
+    int scored = 0;
+    if (scoring.get("dimensions") instanceof List<?> dimensions) {
+      for (Object dimension : dimensions) {
+        if (dimension instanceof Map<?, ?> item && item.get("score") instanceof Number score) {
+          points += score.intValue();
+          scored++;
+        }
+      }
+    }
+    Integer total = scored == 0 ? null : (int) Math.round(points * 100.0 / (scored * POINTS_PER_DIMENSION));
+    return new Summary(total, scored);
   }
 
   static Optional<Map<String, Object>> read(Object output, Map<String, String> turnReferences,
@@ -29,24 +46,17 @@ final class PracticeScoring {
     if (!(output instanceof List<?> rows) || rows.isEmpty() || rows.size() > DIMENSIONS.size())
       return Optional.empty();
     var dimensions = new ArrayList<Map<String, Object>>();
-    int total = 0;
-    int scored = 0;
     for (String key : DIMENSIONS) {
       var matches = new ArrayList<Map<?, ?>>();
       for (Object row : rows)
         if (row instanceof Map<?, ?> item && key.equals(item.get("key"))) matches.add(item);
-      var dimension = matches.size() == 1
+      dimensions.add(matches.size() == 1
         ? dimension(key, matches.get(0), turnReferences, turns)
-        : result(key, null, "本项暂缺可核对的评分。", List.of());
-      dimensions.add(dimension);
-      if (dimension.get("score") instanceof Integer score) {
-        total += score;
-        scored++;
-      }
+        : result(key, null, "本项暂缺可核对的评分。", List.of()));
     }
     var scoring = new LinkedHashMap<String, Object>();
-    scoring.put("total", scored == DIMENSIONS.size() ? total : null);
     scoring.put("dimensions", dimensions);
+    scoring.put("total", summarize(scoring).total());
     return Optional.of(scoring);
   }
 
