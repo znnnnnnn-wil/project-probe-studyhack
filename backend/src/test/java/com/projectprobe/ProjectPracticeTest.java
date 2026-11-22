@@ -165,11 +165,37 @@ class ProjectPracticeTest {
     var second = livePractice.run(user, project, Map.of("answer", "我负责测试"));
     assertEquals("COMPLETED", second.get("status"));
     var secondScoring = PracticeRetest.object(PracticeRetest.object(second.get("report")).get("scoring"));
-    assertNull(secondScoring.get("total"));
+    assertEquals(80, secondScoring.get("total"));
     assertNull(list(secondScoring, "dimensions").get(0).get("score"));
     assertNull(list(secondScoring, "dimensions").get(1).get("score"));
     assertEquals(15, list(secondScoring, "dimensions").get(2).get("score"));
-    assertEquals(80, livePractice.history(user).get(1).get("totalScore"));
+    var history = livePractice.history(user);
+    assertEquals(80, history.get(0).get("totalScore"));
+    assertEquals(2, history.get(0).get("scoredDimensions"));
+    assertEquals(80, history.get(1).get("totalScore"));
+    assertEquals(4, history.get(1).get("scoredDimensions"));
+  }
+
+  @Test void recalculatesTheOverallScoreFromSavedPartialDimensions() {
+    String user = id();
+    s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
+    String project = str(projects.save(user, null, Map.of("name", "课程资料问答助手")), "id");
+    String round = id();
+    var dimensions = List.of(Map.of("key", "clarity", "score", 15), Map.of("key", "ownership"),
+      Map.of("key", "depth", "score", 10), Map.of("key", "validation", "score", 5));
+    var body = Map.of("report", Map.of("scoring", Map.of("dimensions", dimensions)));
+    s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,'COMPLETED',?)",
+      user, project, round, 1, 0, s.encode(body));
+
+    var report = PracticeRetest.object(practice.get(user, project, round).get("report"));
+    var scoring = PracticeRetest.object(report.get("scoring"));
+    assertEquals(40, scoring.get("total"));
+    assertEquals(dimensions, scoring.get("dimensions"));
+    var record = practice.history(user).get(0);
+    assertEquals(40, record.get("totalScore"));
+    assertEquals(3, record.get("scoredDimensions"));
+    assertEquals(new PracticeScoring.Summary(0, 1), PracticeScoring.summarize(Map.of("dimensions", List.of(Map.of("score", 0)))));
+    assertEquals(new PracticeScoring.Summary(null, 0), PracticeScoring.summarize(Map.of("dimensions", List.of(Map.of("key", "ownership")))));
   }
 
   @Test void canScoreAnAlreadyCompletedLiveReportWithoutRewritingFeedback() {

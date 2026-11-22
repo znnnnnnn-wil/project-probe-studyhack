@@ -23,8 +23,7 @@ class ProjectPractice {
       var project = PracticeRetest.object(body.get("project"));
       var retest = PracticeRetest.object(body.get("retest"));
       var report = PracticeRetest.object(body.get("report"));
-      var scoring = PracticeRetest.object(report.get("scoring"));
-      boolean hasScoring = PracticeScoring.hasScore(scoring);
+      var scoring = PracticeScoring.summarize(PracticeRetest.object(report.get("scoring")));
       var firstFinding = report.get("findings") instanceof List<?> findings && !findings.isEmpty()
         ? PracticeRetest.object(findings.get(0)) : Map.<String, Object>of();
       String projectId = str(row, "project_id");
@@ -41,8 +40,9 @@ class ProjectPractice {
       ));
       summary.put("startedAt", row.get("started_at"));
       summary.put("interviewTopic", str(body, "interviewTopic"));
-      summary.put("hasScoring", hasScoring);
-      summary.put("totalScore", scoring.get("total"));
+      summary.put("hasScoring", scoring.scoredDimensions() > 0);
+      summary.put("totalScore", scoring.total());
+      summary.put("scoredDimensions", scoring.scoredDimensions());
       summary.put("prioritySuggestion", str(firstFinding, "task"));
       return summary;
     }).toList();
@@ -78,6 +78,9 @@ class ProjectPractice {
       return Map.of("status", "AVAILABLE", "maxTurns", maxTurns, "roundNumber", row.get("round_number"));
     }
     var result = s.decode(row.get("body"));
+    var report = PracticeRetest.object(result.get("report"));
+    var scoring = PracticeRetest.object(report.get("scoring"));
+    if (!scoring.isEmpty()) scoring.put("total", PracticeScoring.summarize(scoring).total());
     long lease = ((Number) row.get("lease_until")).longValue();
     result.put("roundId", row.get("round_id"));
     result.put("roundNumber", row.get("round_number"));

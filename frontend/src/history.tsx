@@ -23,6 +23,7 @@ type PracticeRecord = {
   interviewTopic: string;
   totalScore?: number | null;
   hasScoring?: boolean;
+  scoredDimensions?: number;
   prioritySuggestion: string;
 };
 
@@ -88,8 +89,12 @@ function PracticeRound({ record, current, archivePath, resumePath }: {
         </p>
         {complete && (
           <div className="practice-history-outcome">
-            <strong>{typeof record.totalScore === "number" ? `评分 ${record.totalScore} / 100` :
-              record.hasScoring ? "部分维度已评分" : "未评分"}</strong>
+            <strong>
+              {typeof record.totalScore === "number" ? `综合分 ${record.totalScore} / 100` :
+                record.hasScoring ? "部分维度已评分" : "未评分"}
+              {typeof record.totalScore === "number" && typeof record.scoredDimensions === "number" &&
+                ` · ${record.scoredDimensions} / 4 项已评分`}
+            </strong>
             {record.prioritySuggestion && <p><strong>优先改进</strong> {record.prioritySuggestion}</p>}
           </div>
         )}

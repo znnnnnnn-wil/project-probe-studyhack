@@ -20,7 +20,11 @@ const scoreLabels: Record<ScoreDimension["key"], string> = {
 };
 
 function hasPracticeScore(report?: Report) {
-  return report?.scoring?.dimensions?.some(dimension => typeof dimension.score === "number") ?? false;
+  return scoredDimensionCount(report) > 0;
+}
+
+function scoredDimensionCount(report?: Report) {
+  return report?.scoring?.dimensions.filter(dimension => typeof dimension.score === "number").length ?? 0;
 }
 
 function PracticeExport({ practice }: { practice: Practice }) {
@@ -36,7 +40,7 @@ function PracticeExport({ practice }: { practice: Practice }) {
       practice.modelMode === "live" ? "AI 练习复盘" : "规则演示",
       "## 本场评分",
       ...(scoring ? [
-        scoring.total == null ? "未生成总分" : `总分 ${scoring.total} / 100`,
+        scoring.total == null ? "暂无有效评分" : `综合分 ${scoring.total} / 100 · ${scoredDimensionCount(report)} / ${scoring.dimensions.length} 项已评分`,
         ...scoring.dimensions.map(dimension =>
           `- ${scoreLabels[dimension.key]} · ${dimension.score == null ? "未覆盖" : `${dimension.score} / 25`} · ${dimension.reason}`),
       ] : ["未评分"]),
@@ -74,7 +78,8 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
   const turns = practice.turns ?? [];
   const report = practice.report;
   const scoring = report?.scoring;
-  const hasScore = hasPracticeScore(report);
+  const scored = scoredDimensionCount(report);
+  const hasScore = scored > 0;
   const evidenceLinks = (turnIds: string[]) => {
     const indices = turns.flatMap((turn, index) => turnIds.includes(turn.id) ? [index] : []);
     if (!indices.length) return null;
@@ -128,9 +133,10 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
           <div className="practice-score-heading" aria-live="polite">
             <h3>本场评分</h3>
             {scoring?.total != null ? (
-              <strong className="practice-score-total">{scoring.total}<small> / 100</small></strong>
-            ) : hasScore ? (
-              <span>未生成总分</span>
+              <>
+                <strong className="practice-score-total"><small>综合分 </small>{scoring.total}<small> / 100</small></strong>
+                <span>{scored} / {scoring.dimensions.length} 项已评分</span>
+              </>
             ) : (
               <span>{practice.modelMode === "demo" ? "规则演示 · 未评分" : scoring ? "暂无有效评分" : "未评分"}</span>
             )}
@@ -146,7 +152,7 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
               </li>
             ))}
           </ul>}
-          {hasScore && <p className="practice-score-note">AI 根据本场回答评分。</p>}
+          {hasScore && <p className="practice-score-note">AI 根据本场回答评分。{scored < (scoring?.dimensions.length ?? 0) && "综合分仅按已评分维度折算。"}</p>}
           {scoreAction}
         </section>
         {report.clearParts.length > 0 && <section className="practice-result-block" aria-label="讲得好的地方">
