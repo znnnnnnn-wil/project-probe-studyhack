@@ -2,10 +2,13 @@ package com.projectprobe;
 
 import static com.projectprobe.Store.*;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 class ProjectPractice {
+  private static final Logger log = LoggerFactory.getLogger(ProjectPractice.class);
   final Store s; final ProjectService projects; final ModelService model;
   @org.springframework.beans.factory.annotation.Value("${app.practice-max-turns:5}") int maxTurns;
   @org.springframework.beans.factory.annotation.Autowired JourneyMetrics journey;
@@ -271,7 +274,10 @@ class ProjectPractice {
         return null;
       });
     } catch (Exception e) {
+      log.warn("practice_generation_failed roundId={} exceptionType={} locations={}", roundId,
+        e.getClass().getName(), Arrays.stream(e.getStackTrace()).limit(6).toList());
       s.db.update("UPDATE project_practice_rounds SET status='FAILED',lease_until=0 WHERE user_id=? AND round_id=? AND lease_token=?", user, roundId, token);
+      if (e instanceof ModelContext.TooLarge limit) throw limit;
       throw error(503, "练习生成失败，已保存进度，可在原项目重试");
     } finally {
       if (priorDeadline == Long.MAX_VALUE) model.questionDeadline.remove();

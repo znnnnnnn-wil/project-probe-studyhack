@@ -78,6 +78,26 @@ class TrainingHistoryRegressionTest {
   }
 
   @Test
+  void contextLimitIsVisibleWithoutLosingTheSavedTrainingAnswer() {
+    String user = user();
+    var p = project(user);
+    var gateway = spy(model);
+    var service = new TrainingService(s, projects, gateway);
+    var training = start(service, user, p);
+    String trainingId = str(training, "id");
+    String turnId = str(list(training, "turns").get(0), "id");
+    doThrow(new ModelContext.TooLarge()).when(gateway).question(any());
+    assertEquals(413, assertThrows(ModelContext.TooLarge.class, () -> service.answer(user, trainingId,
+      Map.of("turnId", turnId, "answer", "我只做了正常路径验证"))).getStatusCode().value());
+    var failed = service.get(user, trainingId);
+    assertEquals("FAILED", failed.get("status"));
+    assertEquals(0L, failed.get("leaseUntil"));
+    assertEquals("我只做了正常路径验证", list(failed, "turns").get(0).get("answer"));
+    assertEquals(new ModelContext.TooLarge().getReason(), failed.get("error"));
+    verify(gateway, times(1)).question(any());
+  }
+
+  @Test
   void successiveRoundsKeepOriginalQuestionsAndAnswers() {
     String user = user();
     var p = project(user);
