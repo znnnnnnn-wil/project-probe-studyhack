@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.HandlerMapping;
 
 @RestController
@@ -57,14 +56,7 @@ class PracticeApi {
   ) {
     String user = user(r);
     practice.requireUnansweredTurn(user, id, turnId, exchangeCount);
-    Map<String, Object> result;
-    try {
-      result = inputs.transcribe(user, file);
-    } catch (ResponseStatusException e) {
-      // The client uses 409 from this endpoint to refresh a stale question.
-      if (e.getStatusCode().value() == 409) throw Store.error(503, e.getReason());
-      throw e;
-    }
+    var result = inputs.transcribe(file);
     practice.requireUnansweredTurn(user, id, turnId, exchangeCount);
     return result;
   }
