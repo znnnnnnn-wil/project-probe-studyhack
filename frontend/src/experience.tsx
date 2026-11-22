@@ -3,13 +3,11 @@ import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
-  CalendarClock,
   Camera,
   CameraOff,
   Check,
   CheckCheck,
   ChevronDown,
-  Database,
   Download,
   FileText,
   Maximize2,
@@ -17,7 +15,6 @@ import {
   Mic,
   RotateCcw,
   ShieldCheck,
-  Sparkles,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -38,26 +35,14 @@ import { useFacePresence } from "./use-face-presence";
 import "./competition.css";
 import "./project-practice.css";
 import { QuickExperience } from "./quick-experience";
-
-const scenarioMeta: Record<
-  string,
-  { icon: typeof Database; level: string }
-> = {
-  booking: { icon: Database, level: "入门 · 并发与一致性" },
-  rag: { icon: Sparkles, level: "进阶 · 检索与引用" },
-  scheduler: { icon: CalendarClock, level: "进阶 · 幂等与重试" },
-};
-
-const scenarioMaterials = [
-  ["background", "项目背景"],
-  ["architecture", "架构说明"],
-  ["implementation", "关键实现"],
-  ["verification", "验证记录"],
-] as const;
+import { ExampleScenarioSelection } from "./example-projects";
 
 export function ExperiencePage() {
   const params = new URLSearchParams(location.hash.split("?")[1]);
-  return params.get("mode") === "quick" ? <QuickExperience /> : <FullExperience />;
+  if (params.get("mode") === "quick") return <QuickExperience />;
+  return readExperience().started ? <FullExperience /> : (
+    <section className="page"><a className="button secondary" href="#/experience">返回示例项目</a></section>
+  );
 }
 
 function FullExperience() {
@@ -233,102 +218,12 @@ function FullExperience() {
       </div>
       {storageError && <p role="alert">{storageError}</p>}
       {!state.started ? (
-        <div className="experience-intro">
-          <h1>选择练习场景</h1>
-          <p>
-            选一个合成项目，代入实现者回答五轮追问。遇到没把握的问题，可以直接说明不确定。
-          </p>
-          <div className="experience-selection">
-            <div
-              className="experience-options"
-              role="group"
-              aria-label="练习场景"
-            >
-              {samples.map((s) => {
-                const meta = scenarioMeta[s.id];
-                const Icon = meta.icon;
-                const selected = state.sample === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className="experience-option"
-                    aria-pressed={selected}
-                    onClick={() => setState(freshExperience(s.id))}
-                  >
-                    <span className="experience-option-icon" aria-hidden="true">
-                      <Icon size={22} strokeWidth={1.7} />
-                    </span>
-                    <span className="experience-option-info">
-                      <span className="experience-option-meta">
-                        <strong>{s.label}</strong> · {meta.level}
-                      </span>
-                      <span className="experience-option-name">
-                        {s.project.name}
-                      </span>
-                      <span className="experience-option-stack">
-                        {s.project.stack}
-                      </span>
-                    </span>
-                    <span className="experience-option-check" aria-hidden="true">
-                      {selected && <Check size={14} />}
-                    </span>
-                    <span className="experience-option-problem">
-                      <span>已知问题</span>
-                      {s.project.problems}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <section className="experience-plan" aria-label="练习预览">
-              <div className="experience-plan-scenario">
-                <span className="experience-plan-label">当前场景</span>
-                <h2>{sample.project.name}</h2>
-                <p>{sample.project.responsibility}</p>
-              </div>
-              <div className="experience-plan-rounds">
-                <h3>五轮追问</h3>
-                <ol>
-                  {dimensions.map(({ title, task }) => (
-                    <li key={title}>
-                      <strong>{title}</strong>
-                      <span>{task}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            </section>
-            <section
-              className="experience-material"
-              aria-labelledby="experience-material-title"
-            >
-              <div className="experience-intro-actions">
-                <button
-                  type="button"
-                  className="button button-lg"
-                  aria-haspopup="dialog"
-                  onClick={() => {
-                    setState((s) => ({ ...s, started: true }));
-                    openRoom(false);
-                  }}
-                >
-                  开始五轮练习 <ArrowRight size={17} aria-hidden="true" />
-                </button>
-                <p>练习结束后可导出回答与自查清单，示例不提供技术评分。</p>
-              </div>
-              <h2 id="experience-material-title">练习材料</h2>
-              <dl className="experience-material-fields">
-                {scenarioMaterials.map(([field, label]) => (
-                  <div key={field}>
-                    <dt>{label}</dt>
-                    <dd>{sample.project[field]}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          </div>
-        </div>
+        <ExampleScenarioSelection
+          sample={sample}
+          onSelect={selected => setState(freshExperience(selected.id))}
+          onStart={() => setState(s => ({ ...s, started: true }))}
+          footer="练习结束后可导出回答与自查清单，示例不提供技术评分。"
+        />
       ) : (
         <>
           <div className="experience-heading">

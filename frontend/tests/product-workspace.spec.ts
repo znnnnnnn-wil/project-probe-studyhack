@@ -146,19 +146,22 @@ for (const viewport of [
   });
 }
 
-test("未登录示例不发出写入请求，登录后回到原页面", async ({ page }) => {
+test("已有旧版示例不发出写入请求，登录后回到原页面", async ({ page }) => {
   const writes: string[] = [];
   page.on("request", (r) => {
     if (r.method() === "POST") writes.push(r.url());
   });
-  await page.goto("/");
-  await page.getByRole("link", { name: "开始示例练习", exact: true }).click();
-  await page.getByRole("button", { name: "开始五轮练习", exact: true }).click();
-  const room = page.getByRole("dialog", { name: "示例面试室" });
-  await expect(room).toBeVisible();
-  const answer = room.getByLabel("本轮回答");
+  await page.addInitScript(() => {
+    const key = "project-probe:experience:v1";
+    if (!sessionStorage.getItem(key)) sessionStorage.setItem(key, JSON.stringify({
+      version: 1, sample: "booking", started: true, answers: [], draft: "",
+      notes: Array(5).fill(""), checked: Array(5).fill(false),
+    }));
+  });
+  await page.goto("/#/experience?mode=legacy");
+  const answer = page.getByLabel("本轮回答");
   await answer.fill("我需要核对检查和写入的并发边界。");
-  await room.getByRole("button", { name: "保存回答，继续追问" }).click();
+  await page.getByRole("button", { name: "保存回答，继续追问" }).click();
   await expect(answer).toHaveValue("");
   expect(writes).toEqual([]);
   await page.goto("/#/projects/new");

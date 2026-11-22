@@ -148,7 +148,7 @@ export function Home({
               </button>
             </div>
             <div className="probe-hero-note">
-              <span>免登录 · 示例回答仅在浏览器内处理</span>
+              <span>免登录 · 示例项目已填好材料</span>
               <a href="#/experience?mode=quick">免登录体验追问</a>
             </div>
             {!backendReady && <p className="probe-backend-note">自有项目练习需连接服务。</p>}
