@@ -335,8 +335,9 @@ public class ModelService {
     return facts;
   }
 
-  record GeneratedQuestion(String question, String topic, String reviewOf) {
+  record GeneratedQuestion(String question, String topic, String reviewOf, String referenceAnswer) {
     GeneratedQuestion(String question, String topic) { this(question, topic, ""); }
+    GeneratedQuestion(String question, String topic, String reviewOf) { this(question, topic, reviewOf, ""); }
   }
 
   GeneratedQuestion checkedQuestion(String rule, Map<String, Object> input, Map<String, Object> body, boolean retest) {
@@ -350,9 +351,15 @@ public class ModelService {
        """;
     long previous = questionDeadline.get();
     questionDeadline.set(Math.min(previous, now() + 80000));
+    boolean example = ExampleReference.enabled(body);
+    String referenceRule = example
+      ? " 给示例项目附加一个单独的 referenceAnswer 字段，直接回答本次生成的 question。" + ExampleReference.INSTRUCTIONS
+      : "";
     try {
       for (int attempt = 0; attempt < 2; attempt++) {
-        var out = call(rule, input);
+        var output = call(rule + referenceRule, input);
+        var out = example ? new LinkedHashMap<>(output) : output;
+        String referenceAnswer = example ? ExampleReference.read(out.remove(ExampleReference.FIELD)) : "";
         try {
           var question = validateQuestion(out, body);
           if (PracticeRoundHistory.alreadyAnswered(practiceHistory, out))
@@ -374,8 +381,9 @@ public class ModelService {
               && PracticeRoundHistory.sameTopic(entry, out))
             .findFirst().orElseGet(Map::of) : practiceReview;
           if (!source.isEmpty())
-            return new GeneratedQuestion(question.question(), str(source, "topic"), str(source, "id"));
-          return question;
+            return new GeneratedQuestion(question.question(), str(source, "topic"), str(source, "id"), referenceAnswer);
+          return referenceAnswer.isBlank() ? question :
+            new GeneratedQuestion(question.question(), question.topic(), question.reviewOf(), referenceAnswer);
         } catch (org.springframework.web.server.ResponseStatusException e) {
           if (e instanceof ModelQuality.Rejected rejected) rejected.diagnostic.put("candidate",
             Map.of("question", str(out, "question"), "topic", str(out, "topic")));

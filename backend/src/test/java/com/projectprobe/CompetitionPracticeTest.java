@@ -241,6 +241,31 @@ class CompetitionPracticeTest {
     verify(model, times(1)).report(any());
   }
 
+  @Test void exampleFollowUpSavesASeparateReferenceForTheCurrentPrompt() {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("请说明预约唯一约束。", "预约约束", "", "我按座位和时段建立唯一约束。"))
+      .when(model).firstDeepQuestion(any());
+    doReturn(Map.of("decision", "FOLLOW_UP", "reply", "发生冲突时接口返回什么。",
+        "referenceAnswer", "我会返回 409，提示该时段已预约。"))
+      .when(model).call(anyString(), any());
+    var state = service.run(f[0], f[1], Map.of(), true);
+    var first = list(state, "turns").get(0);
+    assertEquals("我按座位和时段建立唯一约束。", first.get("referenceAnswer"));
+    var next = service.run(f[0], f[1], Map.of("turnId", first.get("id"),
+      "answer", "数据库限制了重复插入。", "dialogue", true, "exchangeCount", 0), true);
+    var turn = list(next, "turns").get(0);
+    var exchanges = list(turn, "exchanges");
+    assertEquals("数据库限制了重复插入。", exchanges.get(0).get("answer"));
+    assertEquals("我会返回 409，提示该时段已预约。", exchanges.get(0).get("referenceAnswer"));
+    assertEquals("", turn.get("answer"));
+    assertFalse(ModelContext.exchanges(exchanges).get(0).containsKey("referenceAnswer"));
+    verify(model).call(contains("FOLLOW_UP 时，附加 referenceAnswer"), any());
+  }
+
   @Test void retestContextLimitKeepsTheSupplementAndOriginalReport() {
     var f = fixture();
     var service = new ProjectPractice(s, projects, practice.model);

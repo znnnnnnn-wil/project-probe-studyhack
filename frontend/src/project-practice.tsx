@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Button, Loading } from "./ui";
 import type { Actions } from "./ui";
 import { useProjectPractice } from "./use-project-practice";
-import { ArrowLeft, ArrowRight, Camera, CameraOff, FolderOpen, LoaderCircle, MessageSquare, Mic, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, CameraOff, FolderOpen, LoaderCircle, MessageSquare, Mic, RotateCcw, Send, Volume2, VolumeX } from "lucide-react";
 import "./project-practice.css";
 import type { Project } from "./types";
 import { PracticeConversationVoice } from "./practice-conversation-voice";
@@ -12,6 +12,8 @@ import { useFacePresence } from "./use-face-presence";
 import { useApiResource } from "./use-api-resource";
 
 import { practiceHistoryPath, practiceProjectPath } from "./practice-paths";
+
+import { exampleReferenceAnswer } from "./example-reference";
 
 const voiceConsent = "面试官播报时可以直接开口打断。说话停顿后，录音会自动发往阿里云百炼转写。可随时暂停麦克风。";
 
@@ -107,8 +109,20 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const exchanges = turn?.exchanges || [];
   const pendingExchange = value.pendingExchange || (pending && answer.trim() ? { answer } : undefined);
   const hasDraft = live && !submitted && !value.pendingExchange && !!answer.trim();
-  const prompt = exchanges.at(-1)?.reply || turn?.question || "";
+  const lastExchange = exchanges.at(-1);
+  const prompt = lastExchange?.reply || turn?.question || "";
   const promptKey = questionId + ":" + exchanges.length;
+  const referenceAnswer = example && handsFree && turn && value.status === "ACTIVE" && !waiting && !submitted && !loadError
+    ? turn.explanation ? "我学会了。" :
+      exampleReferenceAnswer(project, prompt, turn.topic, lastExchange ? lastExchange.referenceAnswer : turn.referenceAnswer)
+    : "";
+  const referenceSendBlocked = busy || cancelling || autoListening || autoProcessing || hasDraft || !!value.pendingExchange;
+  const sendReference = () => {
+    if (!referenceAnswer || referenceSendBlocked) return;
+    spokenPrompt.current = promptKey;
+    stop();
+    void run(() => submit(referenceAnswer));
+  };
   const handleAutoListening = useCallback((active: boolean) => {
     setAutoListening(active);
     if (active) {
@@ -280,7 +294,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
           <span className="practice-kicker"><MessageSquare size={15} /> 项目追问 · {String(value.turns?.length || 1).padStart(2, "0")}</span>
           <h3>{turn.question}</h3>
           {turn.explanation && !turn.answer && <p className="practice-footnote" role="status">
-            正在讲解本题，没听懂可以继续问。学会后请说“我学会了”，{value.turns?.length === value.maxTurns ? "确认后生成本场报告。" : "确认后再继续下一题。"}
+            正在讲解本题，没听懂可以继续问。{example ? "学会后可说出或发送“我学会了”" : "学会后请说“我学会了”"}，{value.turns?.length === value.maxTurns ? "确认后生成本场报告。" : "确认后再继续下一题。"}
           </p>}
           {value.interviewTopic && <p>本轮主题：{value.interviewTopic}</p>}
           <p>结合你实际负责的部分回答；没有做过或尚未验证的内容，可以直接说明。</p>
@@ -303,6 +317,19 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
             </ol>
           </section>
         )}
+        {referenceAnswer && <section className="practice-reference" aria-label="参考回答">
+          <div className="practice-reference-heading">
+            <h3>参考回答</h3>
+            <small>{turn?.explanation ? "听懂后可以照读或发送" : "可照读或直接发送"}</small>
+          </div>
+          <p>{referenceAnswer}</p>
+          <div className="practice-reference-action">
+            <small>为方便体验，参考回答只保留关键要点。</small>
+            <Button disabled={referenceSendBlocked} onClick={sendReference}>
+              <Send size={15} aria-hidden="true" />发送参考回答
+            </Button>
+          </div>
+        </section>}
         {handsFree && !showingReportProgress && <PracticeConversationVoice
               endpoint={endpoint}
               turnId={live ? turn?.id ?? "" : ""}

@@ -6,8 +6,11 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 final class PracticeDialogue {
-  record Reply(boolean advance, String text, boolean explained, boolean answeredIndependently) {
+  record Reply(boolean advance, String text, boolean explained, boolean answeredIndependently, String referenceAnswer) {
     Reply(boolean advance, String text, boolean explained) { this(advance, text, explained, false); }
+    Reply(boolean advance, String text, boolean explained, boolean answeredIndependently) {
+      this(advance, text, explained, answeredIndependently, "");
+    }
   }
 
   private static final String TEACHING =
@@ -112,7 +115,14 @@ final class PracticeDialogue {
       var output = model.call("用户已明确表示不会或请求答案，只返回 {\"reply\":\"本题简要讲解\"}。" + TEACHING, input);
       return new Reply(false, modelText(output, "reply", 300), true);
     }
-    return parse(model.call(GUIDANCE, input), recent, answer);
+    boolean example = ExampleReference.enabled(practice);
+    String rule = example ? GUIDANCE + " 仅当 decision 为 FOLLOW_UP 时，附加 referenceAnswer 回答 reply 中的新追问。"
+      + ExampleReference.INSTRUCTIONS : GUIDANCE;
+    var output = model.call(rule, input);
+    var reply = parse(output, recent, answer);
+    String reference = example ? ExampleReference.read(output.get(ExampleReference.FIELD)) : "";
+    if (reply.advance() || reply.explained() || reference.isBlank()) return reply;
+    return new Reply(false, reply.text(), false, reply.answeredIndependently(), reference);
   }
 
   static Reply parseLearning(Map<String, Object> output, String answer) {

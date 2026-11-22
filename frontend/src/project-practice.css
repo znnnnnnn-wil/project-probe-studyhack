@@ -106,6 +106,47 @@
   margin-bottom: 12px;
   font-size: 15px;
 }
+.practice-reference {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--blue-100);
+}
+.practice-reference-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}
+.practice-reference-heading h3 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--blue);
+}
+.practice-reference-heading small,
+.practice-reference-action small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.practice-reference p {
+  margin: 0;
+  line-height: 1.7;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.practice-reference-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 12px;
+  margin-top: 10px;
+}
+.practice-reference-action small {
+  margin-inline-end: auto;
+}
 .practice-dialogue-messages {
   display: grid;
   gap: 10px;

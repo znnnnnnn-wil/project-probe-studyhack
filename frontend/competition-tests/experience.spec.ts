@@ -179,16 +179,21 @@ test("手机访客直接进入正式面试室，答疑、报告和复测均可�
   await room.getByRole("button", { name: "同意并开始语音面试" }).click();
   const progress = (i: number) => room.getByText(`第 ${i} / 5 题`, { exact: true });
   await expect(progress(1)).toBeVisible();
+  const reference = room.getByRole("region", { name: "参考回答" });
+  await expect(reference).toContainText("我负责讲义切分");
+  expect((await reference.locator("p").innerText()).length).toBeLessThanOrEqual(48);
   expect((await (await page.request.get(endpoint)).json()).turns[0].answer).toBe("");
   answer = "我负责检索。";
   await voice.speak();
+  await expect(reference).toContainText("把问题转成向量");
+  expect((await reference.locator("p").innerText()).length).toBeLessThanOrEqual(48);
   await expect(progress(1)).toBeVisible();
   answer = "这题我不会";
   await voice.speak();
   await expect(room.getByText(/正在讲解本题，没听懂可以继续问/)).toBeVisible();
+  await expect(reference).toContainText("我学会了。");
   await expect(progress(1)).toBeVisible();
-  answer = "我学会了。";
-  await voice.speak();
+  await reference.getByRole("button", { name: "发送参考回答" }).click();
   await expect(progress(2)).toBeVisible();
 
   await room.getByRole("button", { name: "返回示例项目" }).click();
@@ -233,4 +238,97 @@ test("手机访客直接进入正式面试室，答疑、报告和复测均可�
   } finally {
     await other.close();
   }
+});
+
+test("访客进入语音面试后可逐题发送参考回答，失败后可重试并回看报告", async ({ page }) => {
+  const voice = await mockHandsFree(page);
+  await page.route("**/api/config", route => route.fulfill({
+    json: { modelMode: "demo", speechEnabled: true, ttsEnabled: false },
+  }));
+  let transcriptions = 0;
+  page.on("request", request => {
+    if (new URL(request.url()).pathname.endsWith("/practice/transcribe")) transcriptions++;
+  });
+  const sent: string[] = [];
+  let interim: Practice | undefined;
+  let observedFinalAnswer = false;
+  let finalAnswerAccepted = false;
+  let finishReport!: () => void;
+  const reportReady = new Promise<void>(resolve => { finishReport = resolve; });
+  await page.route(url => /\/api\/examples\/projects\/[^/]+\/practice$/.test(url.pathname), async route => {
+    const request = route.request();
+    if (request.method() === "GET" && interim && new URL(request.url()).searchParams.has("roundId")) {
+      observedFinalAnswer = true;
+      return route.fulfill({
+        json: finalAnswerAccepted ? interim : {
+          ...interim,
+          turns: interim.turns?.map((turn, index, turns) => index === turns.length - 1 ? { ...turn, answer: "" } : turn),
+        },
+      });
+    }
+    if (request.method() === "POST") {
+      const { answer } = request.postDataJSON();
+      if (typeof answer === "string") {
+        sent.push(answer);
+        if (sent.length === 1) return route.abort();
+        if (sent.length === 6) {
+          const response = await route.fetch();
+          interim = { ...await response.json(), status: "GENERATING", report: undefined };
+          await reportReady;
+          interim = undefined;
+          return route.fulfill({ response });
+        }
+      }
+    }
+    return route.continue();
+  });
+  await page.goto("/#/experience?sample=booking");
+  await page.getByRole("button", { name: "开始五轮练习" }).click();
+  const room = page.getByRole("dialog", { name: "项目面试室" });
+  const start = room.getByRole("button", { name: "同意并开始语音面试" });
+  await expect(start).toBeEnabled();
+  await expect(room.getByRole("button", { name: "用参考回答开始" })).toHaveCount(0);
+  await start.click();
+  const projectId = new URL(page.url()).hash.split("/").pop();
+  const reference = room.getByRole("region", { name: "参考回答" });
+  const send = reference.getByRole("button", { name: "发送参考回答" });
+  const expected: string[] = [];
+  for (let i = 1; i <= 5; i++) {
+    await expect(room.getByText(`第 ${i} / 5 题`, { exact: true })).toBeVisible();
+    await expect(send).toBeEnabled();
+    const answer = await reference.locator("p").innerText();
+    expected.push(answer);
+    if (i === 1) {
+      await expect.poll(voice.broadcasts).not.toHaveLength(0);
+      await send.evaluate(button => {
+        (button as HTMLButtonElement).click();
+        (button as HTMLButtonElement).click();
+      });
+      const draft = room.getByRole("region", { name: "未发送的回答" });
+      await expect(draft).toContainText(answer);
+      await draft.getByRole("button", { name: "重试发送" }).click();
+    } else {
+      await send.click();
+    }
+  }
+
+  try {
+    const progress = room.getByRole("heading", { name: "正在生成面试报告" });
+    await expect.poll(() => observedFinalAnswer).toBe(true);
+    await expect(room.getByText("正在处理最后一题", { exact: true })).toBeVisible();
+    await expect(progress).toHaveCount(0);
+    finalAnswerAccepted = true;
+    await expect(progress).toBeVisible();
+    await expect(room.locator(".practice-report-loading svg")).toHaveCSS("animation-name", "spin");
+    await expect(room.getByText("面试官正在思考", { exact: true })).toHaveCount(0);
+  } finally {
+    finishReport();
+  }
+  await expect(page).toHaveURL(/#\/history\/examples\/[^/]+\/[^/]+$/);
+  const archive = page.getByRole("region", { name: "面试详情" });
+  await expect(archive.getByRole("region", { name: "完整对话" })).toContainText(expected[0]);
+  const result = await (await page.request.get(`/api/examples/projects/${projectId}/practice`)).json();
+  expect(result.turns.map((turn: { answer: string }) => turn.answer)).toEqual(expected);
+  expect(sent).toEqual([expected[0], ...expected]);
+  expect(transcriptions).toBe(0);
 });

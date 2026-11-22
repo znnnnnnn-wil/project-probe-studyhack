@@ -11,7 +11,8 @@ export type Retest = {
 };
 type PracticeTurn = Turn & {
   explanation?: string;
-  exchanges?: { answer: string; reply: string }[];
+  referenceAnswer?: string;
+  exchanges?: { answer: string; reply: string; referenceAnswer?: string }[];
 };
 export type Practice = {
   status: string;
