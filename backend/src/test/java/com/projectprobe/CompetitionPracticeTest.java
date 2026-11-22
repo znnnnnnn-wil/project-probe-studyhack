@@ -472,4 +472,188 @@ class CompetitionPracticeTest {
     for (int i = 0; i < findings.size(); i++)
       assertEquals(list(state, "turns").get(i).get("answer"), list(findings.get(i), "evidence").get(0).get("quote"));
   }
+  @Test void uncertainLearningKeepsTheRoundActiveAndCanBeConfirmedLater() {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("如何处理重复请求？", "幂等")).when(model).firstDeepQuestion(any());
+    doReturn(Map.of("reply", "假设用同一请求键查询已保存结果。"))
+      .doReturn(Map.of("decision", "LEARNED", "reply", "我们进入下一题", "evidence", "这个流程理顺了"))
+      .when(model).call(anyString(), any());
+    doReturn(Map.of("mode", "live", "findings", List.of())).when(model).report(any());
+    var state = service.run(f[0], f[1], Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    state = service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 0, "answer", "不会"));
+    var initial = list(state, "turns").get(0);
+    state = service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 1, "answer", "我已经把这个流程理顺了"));
+    assertEquals("ACTIVE", state.get("status"));
+    assertFalse(state.containsKey("pendingExchange"));
+    assertFalse(state.containsKey("report"));
+    assertEquals(1, list(state, "turns").size());
+    var turn = list(state, "turns").get(0);
+    assertEquals(turnId, turn.get("id"));
+    assertEquals("", turn.get("answer"));
+    assertEquals(initial.get("explanation"), turn.get("explanation"));
+    assertEquals(2, PracticeDialogue.count(turn));
+    assertTrue(PracticeDialogue.currentPrompt(turn).contains("这道题已经理解了吗"));
+    assertEquals(state, service.run(f[0], f[1], Map.of()));
+    verify(model, never()).question(any());
+    verify(model, never()).report(any());
+    state = service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 2, "answer", "我学会了，继续吧。"));
+    assertEquals("COMPLETED", state.get("status"));
+    turn = list(state, "turns").get(0);
+    assertEquals("不会", turn.get("answer"));
+    assertEquals(3, PracticeDialogue.count(turn));
+    assertEquals("我学会了，继续吧。", list(turn, "exchanges").get(2).get("answer"));
+    verify(model, times(2)).call(anyString(), any());
+    verify(model, times(1)).report(any());
+  }
+
+  @Test void failedSpokenAnswerRequestResumesAsExplanationOnTheSameTurn() {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 2;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("重试如何避免重复写入？", "幂等")).when(model).firstDeepQuestion(any());
+    String utterance = "你直接给我答案吧。";
+    String explanation = "假设同一个请求超时后重试，可用相同幂等键查找已经保存的结果。还有不懂的可以继续问。";
+    doReturn(Map.of("decision", "FOLLOW_UP", "reply", "可以先说说你会怎样判断请求已完成。"))
+      .doThrow(new IllegalStateException("temporary model error"))
+      .doReturn(Map.of("reply", explanation)).when(model).call(anyString(), any());
+    var state = service.run(f[0], f[1], Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 0, "answer", "我答呀。"));
+    assertThrows(ResponseStatusException.class, () -> service.run(f[0], f[1],
+      Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 1, "answer", utterance)));
+    var failed = service.get(f[0], f[1]);
+    assertEquals("FAILED", failed.get("status"));
+    assertEquals(utterance, PracticeRetest.object(failed.get("pendingExchange")).get("answer"));
+
+    var recovered = service.run(f[0], f[1], Map.of());
+    assertEquals("ACTIVE", recovered.get("status"));
+    assertFalse(recovered.containsKey("pendingExchange"));
+    assertEquals(1, list(recovered, "turns").size());
+    var turn = list(recovered, "turns").get(0);
+    assertEquals(turnId, turn.get("id"));
+    assertEquals("", turn.get("answer"));
+    assertEquals(explanation, turn.get("explanation"));
+    assertEquals(2, PracticeDialogue.count(turn));
+    assertEquals(utterance, list(turn, "exchanges").get(1).get("answer"));
+    assertEquals(recovered, service.run(f[0], f[1], Map.of()));
+    verify(model, times(2)).call(contains("只返回"), any());
+    verify(model, never()).question(any());
+    verify(model, never()).report(any());
+  }
+
+  @Test void failedFollowUpResumesTheSameTeachingTurnWithoutDuplicatingExchanges() {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("重试如何避免重复写入？", "幂等")).when(model).firstDeepQuestion(any());
+    doReturn(Map.of("reply", "假设重复请求使用同一请求键。")).when(model).call(anyString(), any());
+    var state = service.run(f[0], f[1], Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    state = service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 0, "answer", "不会"));
+    String clarification = "假设首次请求已完成，重试只读取保存的结果，不再执行写入。";
+    doThrow(new IllegalStateException("teaching failed"))
+      .doReturn(Map.of("decision", "EXPLAIN", "reply", clarification)).when(model).call(anyString(), any());
+    assertThrows(ResponseStatusException.class, () -> service.run(f[0], f[1],
+      Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 1, "answer", "还没懂，重试怎么读取结果？")));
+    var failed = service.get(f[0], f[1]);
+    assertEquals("FAILED", failed.get("status"));
+    assertEquals(1, PracticeDialogue.count(list(failed, "turns").get(0)));
+    state = service.run(f[0], f[1], Map.of());
+    var turn = list(state, "turns").get(0);
+    assertEquals("ACTIVE", state.get("status"));
+    assertEquals(turnId, turn.get("id"));
+    assertEquals("", turn.get("answer"));
+    assertEquals(2, PracticeDialogue.count(turn));
+    assertEquals(clarification, turn.get("explanation"));
+    assertEquals(state, service.run(f[0], f[1], Map.of()));
+    verify(model, never()).question(any());
+    verify(model, never()).report(any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"1,学会了，你下一题吧。", "2,学会了，你下一题吧。", "1,我学会了，继续吧。", "2,我学会了，继续吧。",
+    "1,理解了，已经全部都理解了。", "2,OK，我学会了下一题吧。"})
+  void failedSpokenConfirmationResumesWithoutAnotherLearningModelCall(int maxTurns, String confirmation) {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = maxTurns;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("如何处理重复请求？", "幂等")).when(model).firstDeepQuestion(any());
+    doReturn(Map.of("reply", "假设用同一请求键查询已保存结果。")).when(model).call(anyString(), any());
+    doReturn(new ModelService.GeneratedQuestion("如何验证超时场景？", "验证方法")).when(model).question(any());
+    doReturn(Map.of("mode", "live", "findings", List.of())).when(model).report(any());
+    var state = service.run(f[0], f[1], Map.of());
+    String turnId = str(list(state, "turns").get(0), "id");
+    state = service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 0, "answer", "不会"));
+    var row = s.one("SELECT body FROM project_practice_rounds WHERE user_id=? AND round_id=?", f[0], state.get("roundId"));
+    var saved = s.decode(row.get("body"));
+    saved.put("pendingExchange", Map.of("turnId", turnId, "exchangeCount", 1, "answer", confirmation));
+    s.db.update("UPDATE project_practice_rounds SET body=?,status='FAILED',lease_until=0 WHERE user_id=? AND round_id=?",
+      s.encode(saved), f[0], state.get("roundId"));
+    var recovered = service.run(f[0], f[1], Map.of());
+    assertEquals(maxTurns == 1 ? "COMPLETED" : "ACTIVE", recovered.get("status"));
+    assertFalse(recovered.containsKey("pendingExchange"));
+    assertEquals(maxTurns, list(recovered, "turns").size());
+    var turn = list(recovered, "turns").get(0);
+    assertEquals(turnId, turn.get("id"));
+    assertEquals("不会", turn.get("answer"));
+    assertEquals(2, PracticeDialogue.count(turn));
+    assertEquals(confirmation, list(turn, "exchanges").get(1).get("answer"));
+    assertEquals(recovered, service.run(f[0], f[1], Map.of()));
+    verify(model, times(1)).call(anyString(), any());
+    verify(model, times(maxTurns == 1 ? 0 : 1)).question(any());
+    verify(model, times(maxTurns == 1 ? 1 : 0)).report(any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 2})
+  void failedNextQuestionOrReportRetriesCheckpointWithoutRepeatingTeaching(int maxTurns) {
+    for (boolean resubmit : List.of(false, true)) {
+      var f = fixture();
+      var model = dialogueModel();
+      var service = new ProjectPractice(s, projects, model);
+      service.maxTurns = maxTurns;
+      service.journey = practice.journey;
+      doReturn(new ModelService.GeneratedQuestion("重试如何避免重复写入？", "幂等")).when(model).firstDeepQuestion(any());
+      String explanation = "假设同一请求带稳定幂等键，可查询之前结果；业务写入和去重记录应保持一致，跨服务副作用还需核对。";
+      doReturn(Map.of("reply", explanation)).when(model).call(anyString(), any());
+      if (maxTurns == 1) doThrow(new IllegalStateException("report failed"))
+        .doReturn(Map.of("mode", "live", "findings", List.of())).when(model).report(any());
+      else doThrow(new IllegalStateException("question failed"))
+        .doReturn(new ModelService.GeneratedQuestion("如何验证超时场景？", "验证方法")).when(model).question(any());
+      var state = service.run(f[0], f[1], Map.of());
+      String turnId = str(list(state, "turns").get(0), "id");
+      state = service.run(f[0], f[1], Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 0, "answer", "不会"));
+      assertEquals("ACTIVE", state.get("status"));
+      assertEquals(1, list(state, "turns").size());
+      verify(model, never()).question(any());
+      verify(model, never()).report(any());
+      assertThrows(ResponseStatusException.class, () -> service.run(f[0], f[1],
+        Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 1, "answer", "我学会了")));
+      var failed = service.get(f[0], f[1]);
+      assertEquals("FAILED", failed.get("status"));
+      assertFalse(failed.containsKey("pendingExchange"));
+      var saved = list(failed, "turns").get(0);
+      assertEquals("不会", saved.get("answer"));
+      assertEquals(explanation, saved.get("explanation"));
+      assertEquals(2, PracticeDialogue.count(saved));
+      var recovered = service.run(f[0], f[1], resubmit
+        ? Map.of("turnId", turnId, "dialogue", true, "exchangeCount", 2, "answer", "我学会了") : Map.of());
+      assertEquals(maxTurns == 1 ? "COMPLETED" : "ACTIVE", recovered.get("status"));
+      assertEquals(maxTurns, list(recovered, "turns").size());
+      assertEquals(saved, list(recovered, "turns").get(0));
+      assertEquals(recovered, service.run(f[0], f[1], Map.of()));
+      verify(model, times(1)).call(anyString(), any());
+    }
+  }
 }

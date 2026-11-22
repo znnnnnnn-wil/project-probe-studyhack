@@ -215,12 +215,15 @@ class ProjectPractice {
         }
         if (!answer.isBlank()) {
           if (answer.length() > 3000) throw error(400, "练习回答最多 3000 字");
-          if (!str(turn, "answer").isBlank() && !answer.equals(turn.get("answer"))) throw error(409, "练习回答已提交");
-          if (dialogue) {
+          boolean sameExchange = dialogue && exchangeCount > 0 &&
+            answer.equals(str(list(turn, "exchanges").get(exchangeCount - 1), "answer"));
+          if (!str(turn, "answer").isBlank() && !answer.equals(turn.get("answer")) && !sameExchange)
+            throw error(409, "练习回答已提交");
+          if (dialogue && str(turn, "answer").isBlank()) {
             if (!pending.isEmpty() && !answer.equals(str(pending, "answer")))
               throw error(409, "上一段发言已保存，请先恢复生成");
             current.put("pendingExchange", Map.of("turnId", turn.get("id"), "answer", answer, "exchangeCount", exchangeCount));
-          } else turn.put("answer", answer);
+          } else if (!dialogue) turn.put("answer", answer);
         }
       }
       current.remove("status");
