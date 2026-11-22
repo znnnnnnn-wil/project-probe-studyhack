@@ -342,6 +342,13 @@ public class ModelService {
 
   GeneratedQuestion checkedQuestion(String rule, Map<String, Object> input, Map<String, Object> body, boolean retest) {
     rule += " 使用‘请说明’等单句请求表达，以句号结束，不使用问号。每题只问一个可独立回答的具体目标，建议40–90字；不要一次穷举职责、生成方式、冲突判定、返回结果和验证方法。根据回答再选下一目标，不在题干里提供答案。只保留一个请求，例如围绕验证缺口只问如何核对某一输出，不把设置数据、预期结果、观察方式并列要求在一题中。";
+    boolean planScoring = input.containsKey("practiceScoringFocus");
+    if (planScoring) rule += """
+       本轮要尽量覆盖个人职责、表达清晰度、技术深度、验证与边界四个评分维度。practiceScoringFocus 是当前题的主要考点，
+       优先于一般出题策略和历史缺口。结合项目和本轮 turns 出题；前面的实际回答已经充分覆盖该维度，或自选主题无法自然容纳该维度时，
+       可以在主题内改问另一个本轮缺少证据的维度。自选主题限定范围。题干自然表达，topic 仍填写具体考点，不能直接照抄评分维度名称。
+       根据本轮回答判断覆盖情况，题目或旧回答都不能作为候选人已经说过的证据。查漏补缺时只选一个缺项出题。
+       """;
     var practiceHistory = list(new LinkedHashMap<>(input), "practiceHistory");
     var practiceReview = PracticeRetest.object(input.get("practiceReview"));
     if (!practiceHistory.isEmpty()) rule += """
@@ -373,7 +380,7 @@ public class ModelService {
             + (practiceHistory.isEmpty() ? "" : """
                若 context.practiceHistory 存在，优先应用以下跨场规则。以前独立答清的具体考点，不因换措辞或更换假设而重复考察；确实不同的子目标可以使用相同技术词。
                context.practiceReview 存在时是本题必须复测的目标。核对候选是否实际考察该缺口或原题的对应能力，偏题为 OFF_TARGET。复测以前未答清的考点是允许的，不能以跨场标题相同或旧回答不会为由判重复。本场已问的问题仍应去重。
-               """),
+                """) + (planScoring ? " 若有 practiceScoringFocus，核对题目是否考察该维度或当前回答中尚未覆盖的其他维度。自选主题无法容纳指定维度时允许在主题内调整。明显偏离本轮覆盖目标为 OFF_TARGET。" : ""),
             Map.of("candidate", out, "context", questionInput(body), "reviewMode",
               "REVISE_QUESTION".equals(body.get("operation")) ? "REVISION" : "NEXT")));
           var source = practiceReview.isEmpty() ? practiceHistory.stream()
@@ -454,6 +461,8 @@ public class ModelService {
     input.put("coveragePolicy", "askedGoals按规则汇总本轮已问目标。已有目标只能在明确改变假设条件时再问，并返回changedCondition（新条件原文，出现在问题中）；否则换一个未覆盖目标。不要反复要求同一个方法签名或事务边界。用户明确暂时不会时先记录缺口，转下个目标。规则分类不代表掌握情况。");
     input.put("difficulty", body.getOrDefault("difficulty", "IMPLEMENTATION"));
     input.put("questionPolicy", "先选coverage中未覆盖或自报待补充的具体目标；已有回答的主题须指出缺口或改变条件才追问。已有回答不等于掌握。BASIC聚焦职责与正常流程，IMPLEMENTATION聚焦实现细节，TRADEOFF聚焦故障与方案取舍。不得预设未提供的组件。每题180字以内，最多一个问号。");
+    String scoringFocus = QuestionCoverage.practiceScoringFocus(body);
+    if (!scoringFocus.isBlank()) input.put("practiceScoringFocus", scoringFocus);
     if (!str(body, "interviewTopic").isBlank()) input.put("interviewTopic", body.get("interviewTopic"));
     for (String field : List.of(
       "project",
@@ -481,8 +490,10 @@ public class ModelService {
     var practiceHistory = list(new LinkedHashMap<>(body), "practiceHistory");
     if (!practiceHistory.isEmpty()) {
       input.put("practiceHistory", practiceHistory);
-      var review = PracticeRoundHistory.nextReview(body, practiceHistory);
-      if (!review.isEmpty()) input.put("practiceReview", review);
+      if (scoringFocus.isBlank()) {
+        var review = PracticeRoundHistory.nextReview(body, practiceHistory);
+        if (!review.isEmpty()) input.put("practiceReview", review);
+      }
     }
     return input;
   }

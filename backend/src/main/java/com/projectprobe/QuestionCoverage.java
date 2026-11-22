@@ -4,6 +4,21 @@ import static com.projectprobe.Store.*;
 import java.util.*;
 
 final class QuestionCoverage {
+  private static final List<String> PRACTICE_SCORING_FOCUSES = List.of(
+    "个人职责：围绕一个具体环节，让候选人说明自己负责的部分和职责边界。",
+    "表达清晰度：让候选人清楚地讲述一个具体场景的流程或因果关系。",
+    "技术深度：围绕一个具体机制或取舍，追问它如何工作或为什么这样设计。",
+    "验证与边界：围绕一个可观察结果追问如何验证，允许说明尚未实际验证。"
+  );
+
+  static String practiceScoringFocus(Map<String, Object> body) {
+    if (!PracticeScoring.appliesTo(body) || !(body.get("maxTurns") instanceof Number limit) ||
+        limit.intValue() < PRACTICE_SCORING_FOCUSES.size() || "REVISE_QUESTION".equals(body.get("operation"))) return "";
+    int next = body.get("turns") instanceof List<?> turns ? turns.size() : 0;
+    if (next < PRACTICE_SCORING_FOCUSES.size()) return PRACTICE_SCORING_FOCUSES.get(next);
+    return "查漏补缺：优先从本轮回答中尚无依据的评分维度选一项。若四项均有依据，就追问一个最有价值的具体薄弱点。";
+  }
+
   static String goal(Map<String, Object> turn) {
     String text = (str(turn, "question") + " " + str(turn, "topic")).toLowerCase(Locale.ROOT);
     if (text.matches("(?s).*(事务|transactional).*(边界|同一|两个|分开|独立|提交|回滚).*")) return "事务边界";
