@@ -4,6 +4,7 @@ import { api } from "./api";
 import { EvidenceReview } from "./evidence-review";
 import { PracticeRetest } from "./practice-retest";
 import { PracticeReview } from "./practice-review";
+import { exampleApi } from "./practice-paths";
 import type { Report, ScoreDimension } from "./types";
 import { Button, Loading, type Actions } from "./ui";
 import { useProjectPractice } from "./use-project-practice";
@@ -181,12 +182,13 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
   );
 }
 
-export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Actions & {
+export function PracticeArchive({ projectId, roundId, example = false, run, busy, onScored }: Actions & {
   projectId: string;
   roundId: string;
+  example?: boolean;
   onScored?: () => void;
 }) {
-  const { value: data, error, loadError, load, acceptRetest } = useProjectPractice(projectId, roundId);
+  const { endpoint, value: data, error, loadError, load, acceptRetest } = useProjectPractice(projectId, roundId, example);
   const [scorePending, setScorePending] = useState(false);
   const [scoreError, setScoreError] = useState("");
   const loading = data.status === "LOADING";
@@ -205,7 +207,7 @@ export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Act
     setScoreError("");
     setScorePending(true);
     try {
-      const updated = await api<Practice>(`/projects/${encodeURIComponent(projectId)}/practice/score`, "POST", { roundId });
+      const updated = await api<Practice>(endpoint + "/score", "POST", { roundId });
       if (updated?.roundId !== roundId || !hasPracticeScore(updated.report)) throw new Error("评分未生成，请重试。");
       acceptRetest(updated);
       onScored?.();
@@ -238,9 +240,9 @@ export function PracticeArchive({ projectId, roundId, run, busy, onScored }: Act
         </div>
       )} />
       {data.report && <>
-        <PracticeRetest projectId={projectId} roundId={roundId} report={data.report} retest={data.retest}
+        <PracticeRetest endpoint={endpoint} roundId={roundId} report={data.report} retest={data.retest}
           disabled={busy || loadError || scorePending} onChange={acceptRetest} reload={load} />
-        <PracticeReview projectId={projectId} run={run} busy={busy} />
+        <PracticeReview projectId={projectId} endpoint={(example ? exampleApi : "") + "/feedback"} run={run} busy={busy} />
       </>}
     </section>
   );

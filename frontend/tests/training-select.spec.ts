@@ -15,7 +15,7 @@ for (const width of [1440, 390]) {
         json = { id: "synthetic", username: "选择器验收" };
       else if (path === "/api/training-projects")
         json = [{ key: id, name: "预约系统" }];
-      else if (path === "/api/practice-history")
+      else if (path === "/api/practice-history" || path === "/api/examples/practice-history")
         json = [];
       else if (path === "/api/training-page") {
         selected = requestUrl.searchParams.get("key") || "";
