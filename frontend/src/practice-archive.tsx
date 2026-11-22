@@ -82,6 +82,8 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
         {indices.map(index => <button type="button" key={index} onClick={() => {
           const target = conversation.current?.children.item(index);
           if (!(target instanceof HTMLElement)) return;
+          const details = target.querySelector("details");
+          if (details) details.open = true;
           target.focus({ preventScroll: true });
           target.scrollIntoView({ block: "start" });
         }}>查看第 {index + 1} 题对话</button>)}
@@ -96,18 +98,22 @@ function PracticeResult({ practice, scoreAction }: { practice: Practice; scoreAc
         const pending = practice.pendingExchange?.turnId === turn.id ? practice.pendingExchange : undefined;
         return (
           <li key={turn.id} tabIndex={-1} aria-label={`第 ${index + 1} 题对话`}>
-            <h4>第 {index + 1} 题{turn.topic && ` · ${turn.topic}`}</h4>
-            <div className="practice-transcript-message"><strong>面试官</strong><p>{turn.question}</p></div>
-            {exchanges.map(({ answer, reply }, exchangeIndex) => (
-              <div className="practice-transcript-exchange" key={exchangeIndex}>
-                <div className="practice-transcript-message is-answer"><strong>你</strong><p>{answer}</p></div>
-                {reply && <div className="practice-transcript-message"><strong>面试官</strong><p>{reply}</p></div>}
+            <details>
+              <summary>第 {index + 1} 题{turn.topic && ` · ${turn.topic}`}</summary>
+              <div className="practice-transcript-content">
+                <div className="practice-transcript-message"><strong>面试官</strong><p>{turn.question}</p></div>
+                {exchanges.map(({ answer, reply }, exchangeIndex) => (
+                  <div className="practice-transcript-exchange" key={exchangeIndex}>
+                    <div className="practice-transcript-message is-answer"><strong>你</strong><p>{answer}</p></div>
+                    {reply && <div className="practice-transcript-message"><strong>面试官</strong><p>{reply}</p></div>}
+                  </div>
+                ))}
+                {!exchanges.length && turn.answer &&
+                  <div className="practice-transcript-message is-answer"><strong>你</strong><p>{turn.answer}</p></div>}
+                {pending && <div className="practice-transcript-message is-answer"><strong>你</strong><p>{pending.answer}</p></div>}
+                {!exchanges.length && !turn.answer && !pending && <p className="practice-transcript-empty">尚未提交回答</p>}
               </div>
-            ))}
-            {!exchanges.length && turn.answer &&
-              <div className="practice-transcript-message is-answer"><strong>你</strong><p>{turn.answer}</p></div>}
-            {pending && <div className="practice-transcript-message is-answer"><strong>你</strong><p>{pending.answer}</p></div>}
-            {!exchanges.length && !turn.answer && !pending && <p className="practice-transcript-empty">尚未提交回答</p>}
+            </details>
           </li>
         );
       })}

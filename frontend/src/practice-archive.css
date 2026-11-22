@@ -68,10 +68,13 @@
 .practice-score-grid > li,
 .practice-transcript > li {
   min-width: 0;
-  padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--soft);
+}
+
+.practice-score-grid > li {
+  padding: 14px 16px;
 }
 
 .practice-score-grid > li > div:first-child {
@@ -139,13 +142,29 @@
   scroll-margin-top: 96px;
 }
 
-.practice-transcript > li:focus {
+.practice-transcript > li:focus,
+.practice-transcript summary:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: -2px;
+  border-radius: var(--r-sm);
 }
 
-.practice-transcript h4 {
-  margin: 0 0 8px;
+.practice-transcript summary {
+  padding: 14px 16px;
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 700;
+  line-height: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.practice-transcript summary::marker {
+  color: var(--muted);
+}
+
+.practice-transcript-content {
+  padding: 0 16px 14px;
 }
 
 .practice-transcript-message {
