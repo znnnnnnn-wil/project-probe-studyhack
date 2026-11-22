@@ -1,35 +1,51 @@
 package com.projectprobe;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.HandlerMapping;
 
 @RestController
-@RequestMapping("/api")
+@RequestMapping({"/api", "/api/{scope:examples}"})
 class PracticeApi {
   final Auth auth; final ProjectPractice practice; final PracticeRetest retest; final InterviewSpeech speech;
-  final InputService inputs;
-  PracticeApi(Auth auth, ProjectPractice practice, PracticeRetest retest, InterviewSpeech speech, InputService inputs) {
+  final InputService inputs; final ExampleSessions examples;
+  PracticeApi(Auth auth, ProjectPractice practice, PracticeRetest retest, InterviewSpeech speech, InputService inputs,
+    ExampleSessions examples) {
     this.auth = auth; this.practice = practice; this.retest = retest; this.speech = speech;
-    this.inputs = inputs;
+    this.inputs = inputs; this.examples = examples;
   }
+
+  private boolean exampleRequest(HttpServletRequest request) {
+    return request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE) instanceof Map<?, ?> variables
+      && "examples".equals(variables.get("scope"));
+  }
+
+  private String user(HttpServletRequest request) {
+    return exampleRequest(request) ? examples.require(request) : auth.user(request);
+  }
+
   @GetMapping("/practice-history") Object history(HttpServletRequest r) {
-    return practice.history(auth.user(r));
+    String user = exampleRequest(r) ? examples.find(r) : auth.user(r);
+    return user == null ? List.of() : practice.history(user);
   }
   @GetMapping("/projects/{id}/practice") Object get(
     HttpServletRequest r, @PathVariable String id, @RequestParam(defaultValue = "") String roundId
-  ) { return practice.get(auth.user(r), id, roundId); }
-  @PostMapping("/projects/{id}/practice") Object run(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) { return practice.run(auth.user(r), id, input); }
+  ) { return practice.get(user(r), id, roundId); }
+  @PostMapping("/projects/{id}/practice") Object run(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
+    return practice.run(user(r), id, input, exampleRequest(r));
+  }
   @PostMapping("/projects/{id}/practice/cancel") Object cancel(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
-    return practice.cancel(auth.user(r), id, Store.required(input, "roundId", 36));
+    return practice.cancel(user(r), id, Store.required(input, "roundId", 36));
   }
   @PostMapping("/projects/{id}/practice/score") Object score(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
-    return practice.score(auth.user(r), id, Store.required(input, "roundId", 36));
+    return practice.score(user(r), id, Store.required(input, "roundId", 36));
   }
   @PostMapping("/projects/{id}/practice/tts") void tts(HttpServletRequest req, HttpServletResponse res, @PathVariable String id, @RequestBody Map<String, Object> input) {
-    speech.speak(auth.user(req), id, Store.str(input, "turnId"), input.get("exchangeCount"), res);
+    speech.speak(user(req), id, Store.str(input, "turnId"), input.get("exchangeCount"), res);
   }
   @PostMapping(value = "/projects/{id}/practice/transcribe", consumes = "multipart/form-data")
   Map<String, Object> transcribe(
@@ -39,7 +55,7 @@ class PracticeApi {
     @RequestParam(value = "exchangeCount", required = false) Integer exchangeCount,
     @RequestParam("file") MultipartFile file
   ) {
-    String user = auth.user(r);
+    String user = user(r);
     practice.requireUnansweredTurn(user, id, turnId, exchangeCount);
     Map<String, Object> result;
     try {
@@ -53,6 +69,6 @@ class PracticeApi {
     return result;
   }
   @PostMapping("/projects/{id}/practice/retest") Object retest(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
-    return retest.run(auth.user(r), id, input);
+    return retest.run(user(r), id, input);
   }
 }

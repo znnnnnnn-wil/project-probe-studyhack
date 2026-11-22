@@ -94,6 +94,13 @@ public class ProjectService {
     });
   }
 
+  Map<String, Object> openExample(String user, String id, Map<String, Object> input) {
+    return s.locked(user, () -> {
+      var exists = s.db.queryForList("SELECT id FROM projects WHERE id=? AND user_id=?", id, user);
+      return exists.isEmpty() ? saveLocked(user, id, null, materialBody(input)) : get(user, id);
+    });
+  }
+
   List<Map<String, Object>> createBatch(String user, Map<String, Object> input) {
     if (
       !(input.get("projects") instanceof List<?> entries) ||

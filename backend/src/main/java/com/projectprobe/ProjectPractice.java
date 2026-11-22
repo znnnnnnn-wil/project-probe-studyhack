@@ -163,6 +163,10 @@ class ProjectPractice {
   }
 
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
+    return run(user, projectId, input, false);
+  }
+
+  Map<String, Object> run(String user, String projectId, Map<String, Object> input, boolean example) {
     String token = id();
     boolean restart = Boolean.TRUE.equals(input.get("restart"));
     String answer = str(input, "answer").strip();
@@ -228,6 +232,7 @@ class ProjectPractice {
           } else if (!dialogue) turn.put("answer", answer);
         }
       }
+      if (example) current.put("example", true);
       current.remove("status");
       current.remove("leaseUntil");
       current.remove("roundId");
