@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
+import { practiceProjectPath } from "./practice-paths";
 import type { Report, Turn } from "./types";
 export type Retest = {
   findingIndex: number;
@@ -25,7 +26,7 @@ export type Practice = {
   retest?: Retest;
   pendingExchange?: { turnId: string; answer: string; exchangeCount: number };
 };
-export function useProjectPractice(projectId: string, roundId?: string) {
+export function useProjectPractice(projectId: string, roundId?: string, example = false) {
   const [value, setValue] = useState<Practice>({ status: "LOADING" });
   const [answer, setAnswer] = useState("");
   const [staleDraft, setStaleDraft] = useState(false);
@@ -43,7 +44,7 @@ export function useProjectPractice(projectId: string, roundId?: string) {
   const current = useRef(answer); current.current = answer;
   const acceptedTurn = useRef("");
   const acceptedRound = useRef("");
-  const endpoint = `/projects/${projectId}/practice`;
+  const endpoint = practiceProjectPath(projectId, example) + "/practice";
   const readEndpoint = roundId ? endpoint + "?roundId=" + encodeURIComponent(roundId) : endpoint;
   const key = "practice-draft:" + projectId;
   const roundKey = "practice-draft-round:" + projectId;
@@ -266,5 +267,5 @@ export function useProjectPractice(projectId: string, roundId?: string) {
       }
     }
   };
-  return { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, finalTurn, reportGenerating, load, submit, cancel, acceptRetest };
+  return { endpoint, value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, finalTurn, reportGenerating, load, submit, cancel, acceptRetest };
 }

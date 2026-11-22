@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type SpeechTarget = { projectId: string; turnId: string; exchangeCount?: number };
+type SpeechTarget = { endpoint: string; turnId: string; exchangeCount?: number };
 
 export function useQuestionSpeech(ttsEnabled = false) {
   const [speaking, setSpeaking] = useState(false);
@@ -98,7 +98,7 @@ export function useQuestionSpeech(ttsEnabled = false) {
       release.current = cleanup;
       try {
         const response = await fetch(
-          `/api/projects/${target.projectId}/practice/tts`,
+          "/api" + target.endpoint + "/tts",
           {
             method: "POST",
             credentials: "same-origin",

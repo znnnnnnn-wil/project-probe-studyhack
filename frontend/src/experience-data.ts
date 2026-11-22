@@ -1,47 +1,9 @@
-import { demoProject, emptyProject } from "./api";
+import exampleProjects from "../../backend/src/main/resources/example-projects.json" with { type: "json" };
+import { emptyProject } from "./api";
 import type { Project } from "./types";
 
-export const samples: { id: string; label: string; project: Project }[] = [
-  { id: "booking", label: "后端开发", project: { ...demoProject, facts: [] } },
-  {
-    id: "rag",
-    label: "RAG / Agent",
-    project: {
-      ...emptyProject,
-      name: "课程资料问答助手",
-      stack: "Python / FastAPI / 向量检索",
-      background: "合成项目：帮助学生从课程讲义中查找知识点，并展示回答出处。",
-      responsibility:
-        "我负责文档切分、检索接口与引用展示；页面由另一名同学完成。",
-      architecture:
-        "文本讲义切分后建立索引；提问后检索片段，把检索结果和问题交给模型生成回答。",
-      implementation:
-        "按段落切分讲义，保存文档名和段落编号。回答展示对应段落，但尚未核对每个结论是否受引用支持。",
-      problems: "相似章节容易召回错误片段；目前没有设置证据不足时的拒答规则。",
-      verification: "人工试问了十个问题，尚未固定评测集，也未记录检索命中率。",
-      facts: [],
-    },
-  },
-  {
-    id: "scheduler",
-    label: "任务调度",
-    project: {
-      ...emptyProject,
-      name: "校园通知定时发送服务",
-      stack: "Java / Spring Boot / MySQL",
-      background: "合成项目：在指定时间发送社团活动提醒。",
-      responsibility: "我负责任务领取、发送接口调用和发送结果记录。",
-      architecture:
-        "定时扫描数据库中的到期任务，领取后调用通知接口，成功后把状态改为完成。",
-      implementation:
-        "通过条件更新把任务由待发送改为执行中，使用更新行数判断是否领取成功。",
-      problems: "通知服务可能发送成功但返回超时；当前重试可能产生重复通知。",
-      verification:
-        "已在本地手工测试单实例发送，多实例竞争和进程中断尚未验证。",
-      facts: [],
-    },
-  },
-];
+export const samples: { id: string; label: string; project: Project }[] =
+  exampleProjects.map(sample => ({ ...sample, project: { ...emptyProject, ...sample.project } }));
 
 export const dimensions = [
   {

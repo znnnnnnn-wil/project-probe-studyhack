@@ -11,13 +11,16 @@ import { useCameraPreview, useQuestionSpeech } from "./use-interviewer-media";
 import { useFacePresence } from "./use-face-presence";
 import { useApiResource } from "./use-api-resource";
 
+import { practiceHistoryPath, practiceProjectPath } from "./practice-paths";
+
 const voiceConsent = "面试官播报时可以直接开口打断。说话停顿后，录音会自动发往阿里云百炼转写。可随时暂停麦克风。";
 
-export function ProjectInterview({ id, fromHistory, ...props }: Actions & { id: string; fromHistory: boolean }) {
-  const projectId = encodeURIComponent(id);
-  const { data, error, reload } = useApiResource<Project>(`/projects/${projectId}`);
-  const exitLabel = fromHistory ? "返回项目训练记录" : "返回项目列表";
-  const onExit = () => window.location.replace(fromHistory ? `#/history/${projectId}` : "#/projects");
+export function ProjectInterview({ id, fromHistory, example = false, ...props }: Actions & {
+  id: string; fromHistory: boolean; example?: boolean;
+}) {
+  const { data, error, reload } = useApiResource<Project>(practiceProjectPath(id, example));
+  const exitLabel = fromHistory ? "返回项目训练记录" : example ? "返回示例项目" : "返回项目列表";
+  const onExit = () => window.location.replace("#" + (fromHistory ? practiceHistoryPath(example, id) : example ? "/experience" : "/projects"));
   if (error) return <section className="page">
     <p role="alert">{error}</p>
     <div className="action-row">
@@ -26,13 +29,14 @@ export function ProjectInterview({ id, fromHistory, ...props }: Actions & { id: 
     </div>
   </section>;
   if (!data) return <Loading />;
-  return <ProjectPractice projectId={id} project={data} exitLabel={exitLabel} onExit={onExit} {...props} />;
+  return <ProjectPractice projectId={id} project={data} example={example} exitLabel={exitLabel} onExit={onExit} {...props} />;
 }
 
-function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: Actions & {
-  projectId: string; project: Project; exitLabel: string; onExit: () => void;
+function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, busy }: Actions & {
+  projectId: string; project: Project; example: boolean; exitLabel: string; onExit: () => void;
 }) {
-  const { value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, finalTurn, reportGenerating, load, submit, cancel } = useProjectPractice(projectId);
+  const { endpoint, value, answer, staleDraft, edit, discardDraft, error, loadError, pending, cancelling, notice, submitted, finalTurn,
+    reportGenerating, load, submit, cancel } = useProjectPractice(projectId, undefined, example);
   const [topic, setTopic] = useState("");
   const activeRound = useRef<string | undefined>(undefined);
   const [voiceAccepted, setVoiceAccepted] = useState(false);
@@ -57,6 +61,9 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
   const canUseVoiceRoom = !!mediaConfig?.speechEnabled;
   const handsFree = voiceAccepted && canUseVoiceRoom;
   const startBlocked = busy || waiting || cancelling || loadError || value.retest?.status === "GENERATING";
+  const openReport = useCallback(() => {
+    if (value.roundId) window.location.replace("#" + practiceHistoryPath(example, projectId, value.roundId));
+  }, [example, projectId, value.roundId]);
   const closeRoom = () => {
     camera.stop();
     stop();
@@ -93,9 +100,9 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     if (!value.report) activeRound.current = roundId;
     else if (activeRound.current === roundId) {
       activeRound.current = undefined;
-      window.location.replace(`#/history/${encodeURIComponent(projectId)}/${encodeURIComponent(roundId)}`);
+      openReport();
     }
-  }, [projectId, value.report, value.roundId]);
+  }, [openReport, value.report, value.roundId]);
   const questionId = turn?.id;
   const exchanges = turn?.exchanges || [];
   const pendingExchange = value.pendingExchange || (pending && answer.trim() ? { answer } : undefined);
@@ -116,8 +123,8 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
   useLayoutEffect(() => {
     if (!needsPlayback || !questionId) return;
     spokenPrompt.current = promptKey;
-    speak(prompt, { projectId, turnId: questionId, exchangeCount: exchanges.length });
-  }, [needsPlayback, projectId, questionId, promptKey, prompt, exchanges.length, speak]);
+    speak(prompt, { endpoint, turnId: questionId, exchangeCount: exchanges.length });
+  }, [needsPlayback, endpoint, questionId, promptKey, prompt, exchanges.length, speak]);
   useLayoutEffect(() => {
     if (playbackAllowed) return;
     spokenPrompt.current = "";
@@ -150,7 +157,11 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
     { label: "技术栈", value: project.stack ?? "" },
     { label: "项目简介", value: project.background ?? "", wide: true },
   ].filter(f => f.value.trim());
-  const resumeText = (project.resume ?? "").trim();
+  const exampleDetails = example ? [
+    ["个人职责", project.responsibility], ["架构说明", project.architecture],
+    ["关键实现", project.implementation], ["已知问题", project.problems], ["验证记录", project.verification],
+  ].flatMap(([label, text]) => text?.trim() ? [label + "：" + text.trim()] : []) : [];
+  const resumeText = [project.resume?.trim(), ...exampleDetails].filter(Boolean).join("\n\n");
   const submittedHistory = answeredTurns.length > 0 && <details className="practice-footnote">
     <summary>查看本轮已提交问答（{answeredTurns.length}）</summary>
     {answeredTurns.map(t => <article key={t.id}><h4>{t.question}</h4><p style={{ whiteSpace: "pre-wrap" }}>{t.answer}</p></article>)}
@@ -192,7 +203,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
                       if (!turn) return;
                       unlock();
                       spokenPrompt.current = promptKey;
-                      speak(prompt, { projectId, turnId: turn.id, exchangeCount: exchanges.length });
+                      speak(prompt, { endpoint, turnId: turn.id, exchangeCount: exchanges.length });
                     }}><RotateCcw size={18} /></button>
                   <button type="button" className="round-control" aria-pressed={camera.on} aria-describedby="project-camera-caption"
                     aria-label={camera.on ? "关闭摄像头" : "开启摄像头"} title={camera.on ? "关闭摄像头" : "开启摄像头"}
@@ -293,7 +304,7 @@ function ProjectPractice({ projectId, project, exitLabel, onExit, run, busy }: A
           </section>
         )}
         {handsFree && !showingReportProgress && <PracticeConversationVoice
-              projectId={projectId}
+              endpoint={endpoint}
               turnId={live ? turn?.id ?? "" : ""}
               exchangeCount={exchanges.length}
               enabled
