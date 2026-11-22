@@ -16,8 +16,6 @@ import org.apache.pdfbox.pdmodel.*;
 import org.apache.pdfbox.pdmodel.font.*;
 import org.apache.poi.xwpf.usermodel.*;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -116,30 +114,18 @@ class InputRegressionTest {
   }
 
   @Test
-  void exhaustedParsingQuotaRejectsBeforeReadingDocument() throws Exception {
+  void oldParsingAndRecognitionCountsDoNotBlockResume() {
     String user = user();
-    var upload = spy(
-      file(
-        "resume.txt",
-        "合成项目简历，我负责接口和测试，尚未执行压测。".getBytes(
-          StandardCharsets.UTF_8
-        )
-      )
-    );
-    s.db.update(
-      "INSERT INTO input_limits(user_id,kind,window_start,attempts) VALUES (?,'RESUME_PARSE',?,60)",
-      user,
-      now()
-    );
-    assertEquals(
-      429,
-      assertThrows(ResponseStatusException.class, () ->
-        inputs.resume(user, upload)
-      )
-        .getStatusCode()
-        .value()
-    );
-    verify(upload, never()).getBytes();
+    for (String kind : List.of("RESUME_PARSE", "RESUME")) {
+      s.db.update("INSERT INTO input_limits(user_id,kind,window_start,attempts,lease_until) VALUES (?,?,?,100,?)",
+        user, kind, now(), now() + 90_000);
+    }
+    var model = resumeModel("model-a");
+    doReturn(Map.of("projects", List.of(candidate()))).when(model).call(anyString(), any());
+    var service = new InputService(s, model);
+    for (int i = 0; i < 61; i++)
+      assertEquals(false, service.resume(user, resumeFile("resume.txt", "合成材料版本 " + i)).get("duplicate"));
+    verify(model, times(61)).call(anyString(), any());
   }
 
   @Test
@@ -282,7 +268,7 @@ class InputRegressionTest {
   }
 
   @Test
-  void repeatedResumeAcrossInstancesAndRenamingDoesNotConsumeQuota() {
+  void repeatedResumeAcrossInstancesAndRenamingUsesCachedResult() {
     String user = user();
     var model = resumeModel("model-a");
     doReturn(Map.of("projects", List.of(candidate())))
@@ -291,10 +277,6 @@ class InputRegressionTest {
     var service = new InputService(s, model);
     var first = service.resume(user, resumeFile("first.txt", ""));
     assertEquals(false, first.get("duplicate"));
-    s.db.update(
-      "UPDATE input_limits SET attempts=10 WHERE user_id=? AND kind='RESUME'",
-      user
-    );
     var second = new InputService(s, model).resume(
       user,
       file(
@@ -308,14 +290,6 @@ class InputRegressionTest {
     assertEquals(first.get("projects"), second.get("projects"));
     assertEquals(first.get("recognizedAt"), second.get("recognizedAt"));
     verify(model, times(1)).call(anyString(), any());
-    assertEquals(
-      10,
-      s.db.queryForObject(
-        "SELECT attempts FROM input_limits WHERE user_id=? AND kind='RESUME'",
-        Integer.class,
-        user
-      )
-    );
   }
 
   @Test
@@ -410,14 +384,17 @@ class InputRegressionTest {
   }
 
   @Test
-  void concurrentResumeAcrossInstancesCallsModelOnce() throws Exception {
+  void concurrentResumeAcrossInstancesOnlyDeduplicatesIdenticalDocuments() throws Exception {
     String user = user();
     var model = resumeModel("model-a");
     var entered = new CountDownLatch(1);
     var exit = new CountDownLatch(1);
+    var calls = new java.util.concurrent.atomic.AtomicInteger();
     doAnswer(invocation -> {
-      entered.countDown();
-      assertTrue(exit.await(5, TimeUnit.SECONDS));
+      if (calls.incrementAndGet() == 1) {
+        entered.countDown();
+        assertTrue(exit.await(8, TimeUnit.SECONDS));
+      }
       return Map.of("projects", List.of(candidate()));
     })
       .when(model)
@@ -436,6 +413,7 @@ class InputRegressionTest {
           .getStatusCode()
           .value()
       );
+      assertEquals(false, new InputService(s, model).resume(user, resumeFile("different.txt", "不同材料")).get("duplicate"));
       exit.countDown();
       assertEquals(false, first.get(5, TimeUnit.SECONDS).get("duplicate"));
       assertEquals(
@@ -444,11 +422,11 @@ class InputRegressionTest {
           .resume(user, resumeFile("third.txt", ""))
           .get("duplicate")
       );
-      verify(model, times(1)).call(anyString(), any());
+      verify(model, times(2)).call(anyString(), any());
       assertEquals(
-        1,
+        0,
         s.db.queryForObject(
-          "SELECT attempts FROM input_limits WHERE user_id=? AND kind='RESUME'",
+          "SELECT COUNT(*) FROM material_jobs WHERE user_id=?",
           Integer.class,
           user
         )
@@ -467,12 +445,12 @@ class InputRegressionTest {
       var model = resumeModel("model-a");
       doAnswer(invocation -> {
         if (superseded) s.db.update(
-          "UPDATE input_limits SET lease_token=? WHERE user_id=? AND kind='RESUME'",
+          "UPDATE material_jobs SET token=? WHERE user_id=? AND kind='RESUME'",
           newToken,
           user
         );
         else s.db.update(
-          "UPDATE input_limits SET lease_until=0 WHERE user_id=? AND kind='RESUME'",
+          "UPDATE material_jobs SET expires_at=0 WHERE user_id=? AND kind='RESUME'",
           user
         );
         return Map.of("projects", List.of(candidate()));
@@ -494,10 +472,10 @@ class InputRegressionTest {
         newToken,
         s
           .one(
-            "SELECT lease_token FROM input_limits WHERE user_id=? AND kind='RESUME'",
+            "SELECT token FROM material_jobs WHERE user_id=? AND kind='RESUME'",
             user
           )
-          .get("lease_token")
+          .get("token")
       );
     }
   }
@@ -529,34 +507,6 @@ class InputRegressionTest {
       0,
       s.db.queryForObject(
         "SELECT COUNT(*) FROM resume_import_cache WHERE user_id=?",
-        Integer.class,
-        user
-      )
-    );
-  }
-
-  @Test
-  void cacheAppearingDuringClaimSkipsOperationAndQuota() {
-    String user = user();
-    var reads = new java.util.concurrent.atomic.AtomicInteger();
-    assertEquals(
-      "cached",
-      inputs.limited(
-        user,
-        "TEST",
-        1,
-        () -> reads.incrementAndGet() == 1 ? null : "cached",
-        () -> {
-          fail("must not call model");
-          return "unused";
-        },
-        result -> fail("must not overwrite cache")
-      )
-    );
-    assertEquals(
-      0,
-      s.db.queryForObject(
-        "SELECT COUNT(*) FROM input_limits WHERE user_id=?",
         Integer.class,
         user
       )
@@ -885,98 +835,6 @@ class InputRegressionTest {
       pool.shutdownNow();
     }
     assertEquals(Integer.MAX_VALUE, s.one("SELECT attempts FROM input_limits WHERE user_id=? AND kind='SPEECH'", user).get("attempts"));
-  }
-
-  @Test
-  void limitsCallsAndReleasesFailedLease() {
-    String user = user();
-    assertThrows(IllegalStateException.class, () ->
-      inputs.limited(user, "TEST", 2, () -> {
-        throw new IllegalStateException();
-      })
-    );
-    assertEquals("ok", inputs.limited(user, "TEST", 2, () -> "ok"));
-    assertEquals(
-      429,
-      assertThrows(ResponseStatusException.class, () ->
-        inputs.limited(user, "TEST", 2, () -> "no")
-      )
-        .getStatusCode()
-        .value()
-    );
-    assertEquals(
-      0L,
-      (
-        (Number) s
-          .one(
-            "SELECT lease_until FROM input_limits WHERE user_id=? AND kind='TEST'",
-            user
-          )
-          .get("lease_until")
-      ).longValue()
-    );
-  }
-
-  @ParameterizedTest
-  @ValueSource(ints = {0, 10})
-  void concurrentSameUserCannotObtainTwoLeases(int limit) throws Exception {
-    String user = user();
-    var entered = new CountDownLatch(1);
-    var exit = new CountDownLatch(1);
-    var pool = Executors.newSingleThreadExecutor();
-    try {
-      var first = pool.submit(() ->
-        inputs.limited(user, "TEST", limit, () -> {
-          entered.countDown();
-          try {
-            exit.await(5, TimeUnit.SECONDS);
-          } catch (Exception e) {
-            throw new RuntimeException(e);
-          }
-          return "ok";
-        })
-      );
-      assertTrue(entered.await(5, TimeUnit.SECONDS));
-      assertEquals(
-        409,
-        assertThrows(ResponseStatusException.class, () ->
-          inputs.limited(user, "TEST", limit, () -> "no")
-        )
-          .getStatusCode()
-          .value()
-      );
-      exit.countDown();
-      assertEquals("ok", first.get(5, TimeUnit.SECONDS));
-    } finally {
-      exit.countDown();
-      pool.shutdownNow();
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(ints = {0, 10})
-  void staleLeaseCannotReturnOrClearNewOwner(int limit) {
-    String user = user();
-    String newToken = id();
-    assertThrows(ResponseStatusException.class, () ->
-      inputs.limited(user, "TEST", limit, () -> {
-        s.db.update(
-          "UPDATE input_limits SET lease_token=? WHERE user_id=? AND kind='TEST'",
-          newToken,
-          user
-        );
-        return "stale";
-      })
-    );
-    assertEquals(
-      newToken,
-      s
-        .one(
-          "SELECT lease_token FROM input_limits WHERE user_id=? AND kind='TEST'",
-          user
-        )
-        .get("lease_token")
-    );
   }
 
   @Test

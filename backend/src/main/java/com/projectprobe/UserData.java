@@ -11,7 +11,7 @@ class UserData {
   void idle(String user) {
     int active = s.db.queryForObject("SELECT COUNT(*) FROM trainings WHERE user_id=? AND status='GENERATING' AND lease_until>?", Integer.class, user, now());
     active += s.db.queryForObject("SELECT COUNT(*) FROM project_practice_rounds WHERE user_id=? AND lease_until>?", Integer.class, user, now());
-    active += s.db.queryForObject("SELECT COUNT(*) FROM input_limits WHERE user_id=? AND lease_until>?", Integer.class, user, now());
+    active += s.db.queryForObject("SELECT COUNT(*) FROM material_jobs WHERE user_id=? AND expires_at>?", Integer.class, user, now());
     active += s.db.queryForObject("SELECT COUNT(*) FROM extraction_limits WHERE user_id=? AND lease_until>?", Integer.class, user, now());
     if (active > 0) throw error(409, "仍有生成或导入任务，请等待完成或恢复后再清理");
   }
@@ -50,6 +50,7 @@ class UserData {
       s.db.update("DELETE FROM project_practice_rounds WHERE user_id=?", user);
       s.db.update("DELETE FROM project_batch_creations WHERE user_id=?", user);
       s.db.update("DELETE FROM resume_import_cache WHERE user_id=?", user);
+      s.db.update("DELETE FROM material_jobs WHERE user_id=?", user);
       s.db.update("DELETE FROM user_feedback WHERE user_id=?", user);
       s.db.update("DELETE FROM account_recovery WHERE user_id=?", user);
       s.db.update("DELETE FROM journey_events WHERE user_id=?", user);
