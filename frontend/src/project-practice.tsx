@@ -170,11 +170,11 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const avatarState = speaking ? "speaking" : thinking ? "thinking" : listening ? "listening" : "idle";
   const avatarStatus = openingFailed ? "首题待重试" : showingReportProgress ? "面试已结束" : finishing ? "正在处理最后一题" :
     speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
-  const action = <Button disabled={busy || cancelling || autoProcessing || (!loadError && (waiting || (!canUseVoiceRoom && !reportNeedsRetry) || (hasDraft && answer.length > 3000)))} onClick={() => {
+  const action = <Button disabled={busy || cancelling || autoProcessing || (!loadError && (waiting || (!canUseVoiceRoom && !reportNeedsRetry && !openingFailed) || (hasDraft && answer.length > 3000)))} onClick={() => {
     if (loadError) void load(); else void run(async () => { await submit(); });
   }}>
     {loadError ? "重新读取训练状态" : waiting ? "正在生成，自动恢复进度…" : hasDraft ? "重试发送" :
-      reportNeedsRetry ? "重试生成报告" : "重试或恢复训练"}<ArrowRight size={16} />
+      reportNeedsRetry ? "重试生成报告" : openingFailed ? "重试生成首题" : "重试或恢复训练"}<ArrowRight size={16} />
   </Button>;
   const voiceUnavailable = checkingVoice ? <p role="status">正在检查语音服务…</p> : <>
     <p role="status">百炼 ASR 暂未就绪，当前无法开始语音面试。</p>
@@ -301,7 +301,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
                     ? "重试或恢复训练" : "同意并开始语音面试"}
                 </button>
                 <small id="practice-voice-consent">{voiceConsent}</small>
-              </> : voiceUnavailable}
+              </> : <>{openingFailed && action}{voiceUnavailable}</>}
             </>}
           </section>
           </>

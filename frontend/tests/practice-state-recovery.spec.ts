@@ -41,7 +41,7 @@ for (const hasAnswer of [false, true]) {
     await page.goto(interview);
     const room = page.getByRole("dialog", { name: "项目面试室" });
     await expect(room.getByRole("button", { name: "取消语音面试", exact: true })).toBeEnabled();
-    await room.getByRole("button", { name: "重试或恢复训练", exact: true }).click();
+    await room.getByRole("button", { name: hasAnswer ? "重试生成报告" : "重试生成首题", exact: true }).click();
     if (hasAnswer) {
       await expect(page).toHaveURL(new RegExp(`#/history/${id}/round$`));
       await expect(page.getByRole("region", { name: "完整对话" })).toContainText("服务端保存的回答");
