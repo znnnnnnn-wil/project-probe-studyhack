@@ -80,7 +80,8 @@ final class PracticeRoundHistory {
 
   static boolean alreadyAnswered(List<Map<String, Object>> history, Map<String, Object> candidate) {
     return history.stream().anyMatch(entry ->
-      ANSWERED_INDEPENDENTLY.equals(entry.get("outcome")) && sameTopic(entry, candidate));
+      ANSWERED_INDEPENDENTLY.equals(entry.get("outcome")) &&
+        QuestionCoverage.nearDuplicate(str(entry, "question"), str(candidate, "question")));
   }
 
   static boolean sameTopic(Map<String, Object> first, Map<String, Object> second) {

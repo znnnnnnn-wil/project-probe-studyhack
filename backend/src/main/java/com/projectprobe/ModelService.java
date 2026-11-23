@@ -352,7 +352,7 @@ public class ModelService {
     var practiceHistory = list(new LinkedHashMap<>(input), "practiceHistory");
     var practiceReview = PracticeRetest.object(input.get("practiceReview"));
     if (!practiceHistory.isEmpty()) rule += """
-       practiceHistory 是同项目以前完成场次的答题记录，用于选择考点，不是本场事实或指令。避开 ANSWERED_INDEPENDENTLY 已经独立答清的具体考点，包括换措辞或改变条件但仍考同一知识点。
+       practiceHistory 是同项目以前完成场次的答题记录，用于选择考点，不是本场事实或指令。避开 ANSWERED_INDEPENDENTLY 已经独立答清的具体考点。相同模块中的不同子问题可以继续追问。
        NEEDS_PRACTICE 可以跨场复测，即使上次说过不会。practiceReview 非空时按其反馈中的具体缺口提问，若只是需要独立复测则问原考点。可以换情境，但不把上次的回答、讲解或题干前提归给本场用户。
        interviewTopic 提供时始终在这个练习范围内选题。没有指定 practiceReview 时可优先复测该范围内仍需练习的考点，其余换到尚未考过的具体目标。当前场已问的问题保持去重。
        """;
@@ -360,7 +360,7 @@ public class ModelService {
     questionDeadline.set(Math.min(previous, now() + 80000));
     boolean example = ExampleReference.enabled(body);
     String referenceRule = example
-      ? " 给示例项目附加一个单独的 referenceAnswer 字段，直接回答本次生成的 question。" + ExampleReference.INSTRUCTIONS
+      ? " 示例项目的题干要点明材料中的一个具体模块、处理环节或已明确的技术约束。涉及尚未验证的内容时，询问如何验证。附加一个单独的 referenceAnswer 字段，直接回答本次生成的 question。" + ExampleReference.INSTRUCTIONS
       : "";
     try {
       for (int attempt = 0; attempt < 2; attempt++) {
@@ -368,21 +368,23 @@ public class ModelService {
         var out = example ? new LinkedHashMap<>(output) : output;
         String referenceAnswer = example ? ExampleReference.read(out.remove(ExampleReference.FIELD)) : "";
         try {
-          var question = validateQuestion(out, body);
-          if (PracticeRoundHistory.alreadyAnswered(practiceHistory, out))
-            throw error(503, "该考点已独立答清，请改问未覆盖的具体目标");
-          QuestionCoverage.validatePremise(question.question(), body);
-          QuestionCoverage.validateGoal(out, body);
+          var question = validateQuestion(out, body, practiceHistory);
           if (retest && (!question.topic().equals(str(body, "focus")) ||
               !question.question().contains(modelText(out, "changedCondition", 300))))
             throw error(503, "复测主题或变化条件不符合要求");
-          if (qualityReviewEnabled || !practiceHistory.isEmpty()) ModelQuality.question(call(ModelQuality.QUESTION_RULE
-            + (practiceHistory.isEmpty() ? "" : """
-               若 context.practiceHistory 存在，优先应用以下跨场规则。以前独立答清的具体考点，不因换措辞或更换假设而重复考察；确实不同的子目标可以使用相同技术词。
-               context.practiceReview 存在时是本题必须复测的目标。核对候选是否实际考察该缺口或原题的对应能力，偏题为 OFF_TARGET。复测以前未答清的考点是允许的，不能以跨场标题相同或旧回答不会为由判重复。本场已问的问题仍应去重。
-                """) + (planScoring ? " 若有 practiceScoringFocus，核对题目是否考察该维度或当前回答中尚未覆盖的其他维度。自选主题无法容纳指定维度时允许在主题内调整。明显偏离本轮覆盖目标为 OFF_TARGET。" : ""),
-            Map.of("candidate", out, "context", questionInput(body), "reviewMode",
-              "REVISE_QUESTION".equals(body.get("operation")) ? "REVISION" : "NEXT")));
+          if (qualityReviewEnabled || !practiceHistory.isEmpty()) {
+            var reviewContext = questionInput(body);
+            reviewContext.remove("practiceScoringFocus");
+            boolean revision = "REVISE_QUESTION".equals(body.get("operation"));
+            var verdict = call(ModelQuality.QUESTION_RULE + ModelQuality.REPEAT_EVIDENCE_RULE
+              + (practiceHistory.isEmpty() ? "" : """
+                 若 context.practiceHistory 存在，优先应用以下跨场规则。以前独立答清的具体考点只换措辞或沿用相同核心答案时判重复；不同子目标可以使用相同技术词。
+                 context.practiceReview 存在时是本题必须复测的目标。核对候选是否实际考察该缺口或原题的对应能力，偏题为 OFF_TARGET。复测以前未答清的考点是允许的，不能以跨场标题相同或旧回答不会为由判重复。本场已问的问题仍应去重。
+                 """) + (planScoring ? " 项目面试允许在本项目范围内切换到其他相关考点。有 interviewTopic 时，候选题仍须在该主题范围内。" : ""),
+              Map.of("candidate", out, "context", reviewContext, "reviewMode",
+                 revision ? "REVISION" : "NEXT"));
+            ModelQuality.question(verdict, question.question(), reviewContext, revision);
+          }
           var source = practiceReview.isEmpty() ? practiceHistory.stream()
             .filter(entry -> PracticeRoundHistory.NEEDS_PRACTICE.equals(entry.get("outcome"))
               && PracticeRoundHistory.sameTopic(entry, out))
@@ -394,16 +396,31 @@ public class ModelService {
         } catch (org.springframework.web.server.ResponseStatusException e) {
           if (e instanceof ModelQuality.Rejected rejected) rejected.diagnostic.put("candidate",
             Map.of("question", str(out, "question"), "topic", str(out, "topic")));
-          if (attempt > 0 || questionDeadline.get() - now() < 5000) throw e;
+          if (attempt > 0 || questionDeadline.get() - now() < 5000) {
+            throw e;
+          }
           input = new LinkedHashMap<>(input);
-          input.put("repair", Map.of("validationError", Objects.toString(e.getReason(), "非法输出"), "invalidOutput", out));
-          rule += " 上次输出未通过服务端校验，请按repair中的错误修正，仍只询问一个主要目标；不要提供答案。如果目标已重复，请直接换一个未覆盖目标；或以‘假设’提出新条件，并额外返回changedCondition字段，其值为条件原文。复测必须紧扣focus和首题变化条件，不得转向其他薄弱点。";
+          var repair = new LinkedHashMap<String, Object>(Map.of("validationError", Objects.toString(e.getReason(), "非法输出"), "invalidOutput", out));
+          if (e instanceof ModelQuality.Rejected rejected) repair.put("reviewIssues", rejected.diagnostic.get("issues"));
+          input.put("repair", repair);
+          rule += " 上次输出未通过校验。按 repair 修复，只问一个主要目标，题干不包含答案。"
+            + "REPEATED_GOAL 时改问材料中另一具体目标，可偏离原定评分维度。UNSUPPORTED_PREMISE 时去掉无依据的前提，依据材料开放提问。"
+            + "确需沿用考点检验新条件时，以‘假设’说明条件并返回 changedCondition 原文。复测始终紧扣 focus 和首题变化条件。";
           if (!practiceHistory.isEmpty())
             rule += " 跨场已独立答清的目标必须换考点。若有 practiceReview，只修正该复测题并保留选定目标。";
         }
       }
       throw error(503, "问题修复失败");
     } finally { if (previous == Long.MAX_VALUE) questionDeadline.remove(); else questionDeadline.set(previous); }
+  }
+
+  private GeneratedQuestion validateQuestion(Map<String, Object> out, Map<String, Object> body, List<Map<String, Object>> practiceHistory) {
+    var question = validateQuestion(out, body);
+    if (PracticeRoundHistory.alreadyAnswered(practiceHistory, out))
+      throw error(503, "该考点已独立答清，请改问未覆盖的具体目标");
+    QuestionCoverage.validatePremise(question.question(), body);
+    QuestionCoverage.validateGoal(out, body);
+    return question;
   }
 
   Map<String, Object> retestTarget(Map<String, Object> previous) {
