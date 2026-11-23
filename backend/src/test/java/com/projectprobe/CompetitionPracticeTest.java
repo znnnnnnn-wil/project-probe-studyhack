@@ -719,4 +719,45 @@ class CompetitionPracticeTest {
     verify(model, times(2)).call(anyString(), any());
     verify(model).call(anyString(), argThat(input -> PracticeRetest.object(input).containsKey("repair")));
   }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void resumesFinalAnswerAfterMalformedDialogueDecisions(boolean repairIsValid) {
+    var f = fixture();
+    var model = dialogueModel();
+    var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 1;
+    service.journey = practice.journey;
+    doReturn(new ModelService.GeneratedQuestion("请说明任务重启后如何避免重复发送。", "任务恢复")).when(model).firstDeepQuestion(any());
+    doReturn(Map.of("mode", "live", "findings", List.of())).when(model).report(any());
+    var state = service.run(f[0], f[1], Map.of());
+    var turn = list(state, "turns").get(0);
+    String answer = "我会依赖通知服务的幂等键去重。若无此机制，则标记为未知并人工核对，绝不盲目重试以防重复发送。";
+    String first = "我会记录未知结果，并将任务交给人工核对。";
+    String second = "如果没有回调或结果日志，标记未知并暂停自动重试。";
+    turn.put("exchanges", List.of(Map.of("answer", first, "reply", "怎么确认发送结果？"),
+      Map.of("answer", second, "reply", "如何避免通知重复发送？")));
+    state.put("pendingExchange", Map.of("turnId", turn.get("id"), "exchangeCount", 2, "answer", answer));
+    s.db.update("UPDATE project_practice_rounds SET body=?,status='FAILED',lease_until=0 WHERE user_id=? AND round_id=?",
+      s.encode(state), f[0], state.get("roundId"));
+    doReturn(Map.of("reply", "我们继续。"))
+      .doReturn(repairIsValid
+        ? Map.of("decision", "ADVANCE", "reply", "我们开始复盘。", "evidence", "我会依赖通知服务的幂等键去重")
+        : Map.of("decision", "EXPLAIN", "reply", "我来说明如何设计幂等。", "evidence", "请告诉我答案"))
+      .when(model).call(anyString(), any());
+
+    var resumed = service.run(f[0], f[1], Map.of());
+    var completed = list(resumed, "turns").get(0);
+    assertEquals("COMPLETED", resumed.get("status"));
+    assertEquals(state.get("roundId"), resumed.get("roundId"));
+    assertFalse(resumed.containsKey("pendingExchange"));
+    assertEquals(3, PracticeDialogue.count(completed));
+    assertEquals(String.join("\n", first, second, answer), completed.get("answer"));
+    assertEquals(repairIsValid, completed.get("answeredIndependently"));
+    assertFalse(completed.containsKey("explanation"));
+    verify(model, times(2)).call(anyString(), any());
+    verify(model).call(contains("上次进度判断未通过"), argThat(data ->
+      data instanceof Map<?, ?> input && input.get("validationError") instanceof String reason && reason.contains("decision")));
+    verify(model).report(any());
+  }
 }

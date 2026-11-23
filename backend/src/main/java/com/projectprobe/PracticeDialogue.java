@@ -6,11 +6,16 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 final class PracticeDialogue {
+  private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(PracticeDialogue.class);
   private static final String LEGACY_ACKNOWLEDGEMENT = "你好，我们接着聊这道题。你可以从自己负责的部分说起。";
-  record Reply(boolean advance, String text, boolean explained, boolean answeredIndependently, String referenceAnswer) {
+  record Reply(boolean advance, String text, boolean explained, boolean answeredIndependently, String referenceAnswer,
+      Map<String, Object> nextQuestion) {
     Reply(boolean advance, String text, boolean explained) { this(advance, text, explained, false); }
     Reply(boolean advance, String text, boolean explained, boolean answeredIndependently) {
       this(advance, text, explained, answeredIndependently, "");
+    }
+    Reply(boolean advance, String text, boolean explained, boolean answeredIndependently, String referenceAnswer) {
+      this(advance, text, explained, answeredIndependently, referenceAnswer, Map.of());
     }
   }
 
@@ -59,6 +64,8 @@ final class PracticeDialogue {
     + "|(?:但是?|不过|可是)[，,\\s]*(?:为什么|怎么)"
     + "|(?:如果|假如|要是|等我|[你您他她]说|好像|可能|不确定|不认为|不觉得)[^。！？!?；;]*" + UNDERSTOOD
     + "|" + UNDERSTOOD + "(?:啊|呀|啦)?\\s*(?:吗|[？?])");
+  private static final Pattern CLARIFICATION_REQUEST = Pattern.compile(CLAUSE_START
+    + "(?:(?:我)?(?:没(?:有)?听懂|没明白|想问)|(?:请|麻烦)(?:再|帮我)?(?:解释|澄清|讲)|什么意思)");
 
   static int count(Map<String, Object> turn) {
     return turn.get("exchanges") instanceof List<?> exchanges ? exchanges.size() : 0;
@@ -93,7 +100,7 @@ final class PracticeDialogue {
       var exchange = latestQuestionExchange(turn);
       var question = exchange == null ? turn : exchange;
       return new Reply(false, str(question, exchange == null ? "question" : "reply"), false, false,
-        ExampleReference.read(question.get(ExampleReference.FIELD)));
+        ExampleReference.read(question.get(ExampleReference.FIELD)), Map.of());
     }
 
     boolean explain = directExplanationRequest(answer);
@@ -112,7 +119,7 @@ final class PracticeDialogue {
     }
 
     var recent = ModelContext.exchanges(prior);
-    var input = Map.of(
+    var input = new LinkedHashMap<>(Map.<String, Object>of(
       "project", practice.get("project"),
       "topic", str(turn, "topic"),
       "interviewTopic", str(practice, "interviewTopic"),
@@ -122,7 +129,7 @@ final class PracticeDialogue {
       "exchangesTruncated", recent.size() < prior.size(),
       "latestAnswer", answer,
       "currentExplanation", str(turn, "explanation")
-    );
+    ));
     if (learning) return parseLearning(model.call(LEARNING, input), answer);
     if (explain) {
       var output = model.call("用户已明确表示不会或请求答案，只返回 {\"reply\":\"本题简要讲解\"}。" + TEACHING, input);
@@ -131,11 +138,54 @@ final class PracticeDialogue {
     boolean example = ExampleReference.enabled(practice);
     String rule = example ? GUIDANCE + " 仅当 decision 为 FOLLOW_UP 时，附加 referenceAnswer 回答 reply 中的新追问。"
       + ExampleReference.INSTRUCTIONS : GUIDANCE;
+    if (PracticeScoring.appliesTo(practice) && practice.get("maxTurns") instanceof Number limit &&
+        list(practice, "turns").size() < limit.intValue()) {
+      var nextContext = model.questionInput(practice);
+      nextContext.keySet().removeAll(Set.of("project", "turns", "interviewTopic"));
+      input.put("nextQuestionContext", nextContext);
+      rule += " 仅在 ADVANCE 时，额外返回 nextQuestion:{question:string,topic:string}。reply 仍只写过渡语。"
+        + "用 nextQuestionContext 的考点、复练目标和历史去重规则，结合本题 exchanges 和 latestAnswer 生成下一题。"
+        + "在自选主题内只问一个具体目标，最多180字。优先选择当前覆盖维度，开放询问未知实现，不复述已回答的问题，也不预设未知事实。"
+        + (example ? " 在 nextQuestion 内提供 referenceAnswer。" + ExampleReference.INSTRUCTIONS : "");
+    }
+    boolean finalTurn = PracticeScoring.appliesTo(practice) && practice.get("maxTurns") instanceof Number limit &&
+      practice.get("turns") instanceof List<?> turns && turns.size() >= limit.intValue();
+    if (finalTurn) rule += " 这是最后一题。候选人已给出具体方案并交代无法确认时怎样处理，可结束本题，把剩余缺口留给复盘。";
     var output = model.call(rule, input);
-    var reply = parse(output, recent, answer);
+    Reply reply;
+    try {
+      reply = parse(output, recent, answer);
+    } catch (org.springframework.web.server.ResponseStatusException invalid) {
+      log.info("practice_dialogue_repair reason={}", invalid.getReason());
+      if (model.questionDeadline.get() - now() < 5000) throw invalid;
+      var repair = new LinkedHashMap<>(input);
+      repair.put("validationError", invalid.getReason());
+      output = model.call(rule + " 上次进度判断未通过。重新判断当前发言，必须返回 decision 和 reply。"
+        + "证据必须逐字复制。不确定发言是否要求讲解时，返回具体澄清或追问。描述尚未发生的情况，或说明不能确定结果，不等于请求讲解。", repair);
+      try {
+        reply = parse(output, recent, answer);
+      } catch (org.springframework.web.server.ResponseStatusException retryFailed) {
+        if (finalTurn && canCloseWithSavedAnswers(recent, answer)) {
+          log.warn("practice_dialogue_final_answer_saved reason={}", retryFailed.getReason());
+          return new Reply(true, "这道题的回答已经记录，我们进入本场复盘。", false);
+        }
+        throw retryFailed;
+      }
+    }
+    if (reply.advance()) return new Reply(true, reply.text(), false, reply.answeredIndependently(), "",
+      PracticeRetest.object(output.get("nextQuestion")));
     String reference = example ? ExampleReference.read(output.get(ExampleReference.FIELD)) : "";
-    if (reply.advance() || reply.explained() || reference.isBlank()) return reply;
+    if (reply.explained() || reference.isBlank()) return reply;
     return new Reply(false, reply.text(), false, reply.answeredIndependently(), reference);
+  }
+
+  private static boolean canCloseWithSavedAnswers(List<Map<String, Object>> prior, String answer) {
+    return substantiveAnswer(answer) && prior.stream().filter(exchange -> substantiveAnswer(str(exchange, "answer"))).count() >= 2;
+  }
+
+  private static boolean substantiveAnswer(String answer) {
+    return meaningfulLength(answer) >= 16 && !smallTalk(answer) && !directExplanationRequest(answer) &&
+      !answer.contains("?") && !answer.contains("？") && !CLARIFICATION_REQUEST.matcher(answer).find();
   }
 
   static Reply parseLearning(Map<String, Object> output, String answer) {
@@ -187,7 +237,7 @@ final class PracticeDialogue {
     String text = answer.replaceAll("[\\s，。！？、,.!?；;：:]", "");
     String request = "(?:请|麻烦)?[你您]?(?:直接)?"
       + "(?:告诉我(?:答案|怎么答)|给我(?:一个|个)?(?:参考)?答案|求(?:个)?答案"
-      + "|(?:给我|帮我)?(?:讲解|讲讲)(?:一下)?(?:这道题|答案)?)(?:吧|好吗|可以吗)?";
+      + "|(?:给我|帮我)?(?:(?:讲解|讲讲)(?:一下)?|讲一下)(?:这道题|答案)?)(?:吧|好吗|可以吗)?";
     String unable = "(?:这道题|这题|这个问题)?(?:我)?(?:真的|确实|暂时|完全)?(?:不会(?:回答|做|答)?|不知道(?:答案|怎么回答|怎么做|怎么答)?|答不上来)(?:了|啊|呀)?";
     return text.matches("(?:" + unable + "(?:" + request + ")?|" + request + ")");
   }

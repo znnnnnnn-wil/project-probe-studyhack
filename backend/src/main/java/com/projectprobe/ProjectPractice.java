@@ -286,6 +286,7 @@ class ProjectPractice {
         turns.add(newTurn(model.firstDeepQuestion(body)));
       } else {
         var turn = turns.get(turns.size() - 1);
+        Map<String, Object> nextQuestion = Map.of();
         var pending = PracticeRetest.object(body.get("pendingExchange"));
         if (!pending.isEmpty()) {
           if (!str(turn, "id").equals(str(pending, "turnId")) ||
@@ -303,6 +304,7 @@ class ProjectPractice {
           exchanges.add(exchange);
           body.remove("pendingExchange");
           if (reply.advance()) {
+            nextQuestion = reply.nextQuestion();
             turn.put("answer", PracticeDialogue.combinedAnswer(exchanges));
             turn.put("answeredIndependently", reply.answeredIndependently());
             // Keep the model's decision if generating the next question or report fails.
@@ -315,7 +317,7 @@ class ProjectPractice {
         }
         if (!str(turn, "answer").isBlank()) {
           if (turns.size() < ((Number) body.getOrDefault("maxTurns", 1)).intValue()) {
-            turns.add(newTurn(model.question(body)));
+            turns.add(newTurn(nextQuestion.isEmpty() ? model.question(body) : model.question(body, nextQuestion)));
           } else body.put("report", model.report(body));
         }
       }
