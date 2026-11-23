@@ -6,6 +6,7 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 final class PracticeDialogue {
+  private static final String LEGACY_ACKNOWLEDGEMENT = "你好，我们接着聊这道题。你可以从自己负责的部分说起。";
   record Reply(boolean advance, String text, boolean explained, boolean answeredIndependently, String referenceAnswer) {
     Reply(boolean advance, String text, boolean explained) { this(advance, text, explained, false); }
     Reply(boolean advance, String text, boolean explained, boolean answeredIndependently) {
@@ -68,19 +69,31 @@ final class PracticeDialogue {
   }
 
   static String currentPrompt(Map<String, Object> turn) {
-    if (count(turn) > 0) {
-      var exchanges = list(turn, "exchanges");
-      return str(exchanges.get(exchanges.size() - 1), "reply");
+    var exchange = latestQuestionExchange(turn);
+    return exchange == null ? str(turn, "question") : str(exchange, "reply");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> latestQuestionExchange(Map<String, Object> turn) {
+    if (turn.get("exchanges") instanceof List<?> exchanges) {
+      for (int index = exchanges.size() - 1; index >= 0; index--) {
+        var exchange = (Map<String, Object>) exchanges.get(index);
+        String reply = str(exchange, "reply");
+        if (!reply.isBlank() && !LEGACY_ACKNOWLEDGEMENT.equals(reply)) return exchange;
+      }
     }
-    return str(turn, "question");
+    return null;
   }
 
   static Reply decide(ModelService model, Map<String, Object> practice, Map<String, Object> turn, String answer) {
     boolean learning = !str(turn, "explanation").isBlank();
     if (learning && confirmsUnderstanding(answer)) return new Reply(true, "好的，这道题的讲解就到这里。", false);
     if (smallTalk(answer)) {
-      return new Reply(false, learning ? "还有哪里不明白可以继续问；学会后告诉我，我们再继续。"
-        : "你好，我们接着聊这道题。你可以从自己负责的部分说起。", false);
+      if (learning) return new Reply(false, "还有哪里不明白可以继续问；学会后告诉我，我们再继续。", false);
+      var exchange = latestQuestionExchange(turn);
+      var question = exchange == null ? turn : exchange;
+      return new Reply(false, str(question, exchange == null ? "question" : "reply"), false, false,
+        ExampleReference.read(question.get(ExampleReference.FIELD)));
     }
 
     boolean explain = directExplanationRequest(answer);

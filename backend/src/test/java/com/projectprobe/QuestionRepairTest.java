@@ -6,7 +6,9 @@ import org.junit.jupiter.api.Test;
 
 class QuestionRepairTest {
   @Test void exampleReferenceIsOptionalAndUsesTheSameQuestionRequest() {
-    for (Object reference : List.of("我会用座位和时段建立唯一约束。", 123, "字".repeat(48), "字".repeat(49))) {
+    for (Object reference : List.of("我会用座位和时段建立唯一约束。", 123,
+        "CREATE UNIQUE INDEX ON reservations (seat_id, slot_id) WHERE status = 'active';",
+        "字".repeat(ExampleReference.MAX_LENGTH), "字".repeat(ExampleReference.MAX_LENGTH + 1))) {
       var calls = new AtomicInteger();
       var model = new ModelService(null, "demo", "https://example.invalid", "", "", "test") {
         @Override Map<String, Object> call(String rule, Object input) {
@@ -18,7 +20,7 @@ class QuestionRepairTest {
       var practice = new LinkedHashMap<String, Object>(Map.of("example", true));
       var question = model.checkedQuestion("只问一题", new LinkedHashMap<>(), practice, false);
       assertEquals("请说明你实现的预约约束。", question.question());
-      assertEquals(reference instanceof String text && text.length() <= 48 ? text : "", question.referenceAnswer());
+      assertEquals(reference instanceof String text && text.length() <= ExampleReference.MAX_LENGTH ? text : "", question.referenceAnswer());
       assertEquals(1, calls.get());
     }
   }

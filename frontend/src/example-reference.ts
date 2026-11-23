@@ -3,7 +3,16 @@ import type { Project } from "./types";
 
 type Topic = "responsibility" | "implementation" | "problems" | "verification" | "architecture";
 
-const maxReferenceLength = 48;
+const maxReferenceLength = 300;
+const oldAcknowledgement = "你好，我们接着聊这道题。你可以从自己负责的部分说起。";
+type ExampleExchange = { answer: string; reply: string; referenceAnswer?: string };
+
+export function latestQuestionExchange(exchanges: ExampleExchange[]) {
+  for (let index = exchanges.length - 1; index >= 0; index--) {
+    const exchange = exchanges[index];
+    if (exchange.reply && exchange.reply !== oldAcknowledgement) return exchange;
+  }
+}
 
 const answers: Record<string, Record<Topic, string>> = {
   booking: {
@@ -41,24 +50,46 @@ function topicFor(question: string, topic: string): Topic {
   return "implementation";
 }
 
-function shortAnswer(value?: string) {
+function validLength(value?: string) {
   const text = value?.trim() ?? "";
   return text.length <= maxReferenceLength ? text : "";
 }
 
-export function exampleReferenceAnswer(project: Project, prompt: string, topic: string, generated?: string) {
-  const concise = shortAnswer(generated);
-  if (concise) return concise;
-  const question = prompt.replace(/^你提到“[^”]*”。\s*/, "");
+export function exampleReferenceAnswer(
+  project: Project,
+  turn: { question: string; topic: string; referenceAnswer?: string },
+  exchanges: ExampleExchange[],
+) {
+  const followUp = latestQuestionExchange(exchanges);
+  const question = (followUp?.reply || turn.question).replace(/^你提到“[^”]*”。\s*/, "");
+  const generated = validLength(followUp ? followUp.referenceAnswer : turn.referenceAnswer);
+  const normalized = (text: string) => text.toLowerCase().replace(/[\p{P}\s]+/gu, "");
+  const submitted = new Set(exchanges.map(exchange => normalized(exchange.answer)));
+  const available = (text: string) => text && !submitted.has(normalized(text)) ? text : "";
   const example = exampleProjects.find(item => item.project.name === project.name);
-  const conflictResponse = /(?:冲突|失败的?请求).{0,12}(?:返回|响应|状态码)|(?:返回|响应).{0,12}冲突/.test(question);
-  const constraintError = /唯一(?:约束|索引|键)/.test(question + topic) &&
-    /异常|报错|冲突/.test(question) && /捕获|处理|转换|返回|反馈/.test(question);
-  if (example?.id === "booking" && (
-    conflictResponse || constraintError || /DataIntegrityViolationException|该座位已被预约/.test(generated ?? "")
-  )) {
-    return "我会把唯一约束冲突转成 409 响应，提示“该座位已被预约”。";
+  const asksForDdl = /DDL|(?:编写|写出|给出|提供).{0,20}(?:索引语句|SQL|CREATE\s+(?:UNIQUE\s+)?INDEX)|CREATE\s+(?:UNIQUE\s+)?INDEX/i.test(question);
+  if (asksForDdl) {
+    const needsIndex = /唯一|UNIQUE\s+INDEX/i.test(question + turn.question);
+    const needsWhere = /WHERE|部分(?:唯一)?索引/i.test(question + turn.question);
+    const indexStatement = /\bCREATE\s+UNIQUE\s+INDEX\b[\s\S]*?\bON\s+\S+\s*\([^)]+\)/i;
+    const wherePredicate = /\bWHERE\s+\w/i;
+    const complete = (!needsIndex || indexStatement.test(generated)) &&
+      (!needsWhere || wherePredicate.test(generated)) && /\bCREATE\b/i.test(generated);
+    if (complete && available(generated)) return generated;
+    if (example?.id === "booking" && needsIndex && !/排他|EXCLUDE|区间重叠|任意起止/i.test(question) &&
+        /预约|座位|时段|唯一约束|唯一索引|部分索引/i.test(question + turn.question)) {
+      return available("以预约表和字段名为例：\nCREATE UNIQUE INDEX ON reservations (seat_id, slot_id)\nWHERE status = 'active';");
+    }
+    return "";
   }
-  const field = topicFor(question, topic);
-  return shortAnswer(example && answers[example.id]?.[field]) || shortAnswer(project[field]) || shortAnswer(project.implementation);
+  if (generated && available(generated)) return generated;
+  const conflictResponse = /(?:冲突|失败的?请求).{0,12}(?:返回|响应|状态码)|(?:返回|响应).{0,12}冲突/.test(question);
+  const constraintError = /唯一(?:约束|索引|键)/.test(question + turn.topic) &&
+    /异常|报错|冲突/.test(question) && /捕获|处理|转换|返回|反馈/.test(question);
+  if (example?.id === "booking" && (conflictResponse || constraintError)) {
+    return available("我会把唯一约束冲突转成 409 响应，提示“该座位已被预约”。");
+  }
+  if (followUp) return "";
+  const field = topicFor(question, turn.topic);
+  return available(validLength(example && answers[example.id]?.[field]) || validLength(project[field]));
 }

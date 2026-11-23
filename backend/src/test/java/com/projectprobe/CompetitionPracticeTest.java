@@ -107,7 +107,7 @@ class CompetitionPracticeTest {
     assertEquals(turnId, str(first, "id"));
     assertEquals(question, str(first, "question"));
     assertEquals("", str(first, "answer"));
-    assertTrue(PracticeDialogue.currentPrompt(first).contains("接着聊这道题"));
+    assertEquals(question, PracticeDialogue.currentPrompt(first));
     assertEquals(409, assertThrows(ResponseStatusException.class,
       () -> practice.run(user, project, greeting)).getStatusCode().value());
     assertEquals(409, assertThrows(ResponseStatusException.class,
@@ -261,6 +261,9 @@ class CompetitionPracticeTest {
     var exchanges = list(turn, "exchanges");
     assertEquals("数据库限制了重复插入。", exchanges.get(0).get("answer"));
     assertEquals("我会返回 409，提示该时段已预约。", exchanges.get(0).get("referenceAnswer"));
+    var acknowledgement = PracticeDialogue.decide(model, next, turn, "嗯，好。");
+    assertEquals("发生冲突时接口返回什么。", acknowledgement.text());
+    assertEquals("我会返回 409，提示该时段已预约。", acknowledgement.referenceAnswer());
     assertEquals("", turn.get("answer"));
     assertFalse(ModelContext.exchanges(exchanges).get(0).containsKey("referenceAnswer"));
     verify(model).call(contains("FOLLOW_UP 时，附加 referenceAnswer"), any());

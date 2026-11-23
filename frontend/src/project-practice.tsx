@@ -13,7 +13,7 @@ import { useApiResource } from "./use-api-resource";
 
 import { practiceHistoryPath, practiceProjectPath } from "./practice-paths";
 
-import { exampleReferenceAnswer } from "./example-reference";
+import { exampleReferenceAnswer, latestQuestionExchange } from "./example-reference";
 
 
 export function ProjectInterview({ id, fromHistory, example = false, ...props }: Actions & {
@@ -111,12 +111,12 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const exchanges = turn?.exchanges || [];
   const pendingExchange = value.pendingExchange || (pending && answer.trim() ? { answer } : undefined);
   const hasDraft = live && !submitted && !value.pendingExchange && !!answer.trim();
-  const lastExchange = exchanges.at(-1);
+  const lastExchange = latestQuestionExchange(exchanges);
   const prompt = lastExchange?.reply || turn?.question || "";
   const promptKey = questionId + ":" + exchanges.length;
   const referenceAnswer = example && handsFree && turn && value.status === "ACTIVE" && !waiting && !submitted && !loadError
     ? turn.explanation ? "我学会了。" :
-      exampleReferenceAnswer(project, prompt, turn.topic, lastExchange ? lastExchange.referenceAnswer : turn.referenceAnswer)
+      exampleReferenceAnswer(project, turn, exchanges)
     : "";
   const referenceSendBlocked = busy || cancelling || autoListening || autoProcessing || hasDraft || !!value.pendingExchange;
   const sendReference = () => {
