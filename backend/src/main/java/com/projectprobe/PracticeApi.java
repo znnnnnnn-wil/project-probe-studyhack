@@ -53,7 +53,7 @@ class PracticeApi {
     };
     try {
       var result = practice.run(user, id, input, example, sentence ->
-        send.accept(Map.of("sentence", sentence)));
+        send.accept(Map.of("sentence", sentence, "speechTicket", speech.sentenceTicket(user, id, sentence))));
       send.accept(Map.of("result", result));
     } catch (org.springframework.web.server.ResponseStatusException e) {
       if (!response.isCommitted()) {
@@ -72,7 +72,12 @@ class PracticeApi {
     return practice.score(user(r), id, Store.required(input, "roundId", 36));
   }
   @PostMapping("/projects/{id}/practice/tts") void tts(HttpServletRequest req, HttpServletResponse res, @PathVariable String id, @RequestBody Map<String, Object> input) {
-    speech.speak(user(req), id, Store.str(input, "turnId"), input.get("exchangeCount"), res);
+    String user = user(req);
+    if (input.containsKey("speechTicket")) {
+      speech.speakSentence(user, id, Store.str(input, "sentence"), Store.str(input, "speechTicket"), res);
+    } else {
+      speech.speak(user, id, Store.str(input, "turnId"), input.get("exchangeCount"), res);
+    }
   }
   @PostMapping(value = "/projects/{id}/practice/transcribe", consumes = "multipart/form-data")
   Map<String, Object> transcribe(
