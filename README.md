@@ -1,20 +1,21 @@
-# 项目追问官 · StudyHack 参赛开发版
+# 项目追问官 · StudyHack
 
-围绕真实项目材料练习连续技术追问，保留原回答与材料依据，把复盘变成可执行的补充任务。
+给准备技术实习的学生做的项目面试练习工具。围绕项目材料连续追问，把「我做了什么、怎么实现、怎么验证」讲成能核对的细节。
 
-从 `E:\project\new\zhifubao` 复制并改造，原目录未修改。当前副本没有复制原项目的 `.env`、`.secrets`、运行数据库、账号或部署身份。
+**[打开项目追问官](https://project-probe-ooc80l33zpz.qoder.website/)** · [三分钟演示指引](docs/COMPETITION.md)
 
-## 现在可以做什么
+## 在线体验
 
-- 预约系统、课程资料 RAG 和定时通知三个示例项目已填好材料。访客可直接进入正式语音面试室，并在同一浏览器查看训练记录、报告和复测。
-- 登录后可手动填写项目材料，也可上传简历，核对识别出的项目后一次保存。
-- 每个项目可直接开始五轮追问。完成后可以查看原回答、引用与补充任务，也可以开始新一轮，在训练记录中回看历次复盘。
+1. 打开站点，点击「开始示例练习」，选择「校园自习室预约系统」。
+2. 点击「开始五轮练习」和「同意并开始语音面试」，按浏览器提示授权麦克风。
+3. 听数字人提问后开口回答。示例也可以点击「发送参考回答」继续。
+4. 练完查看复盘，回看原回答、改进建议和依据。有合适的改进项时可以再答一次做对照，也可以导出复盘。
 
-默认使用规则模型。两类面试均由后端保存和处理，启用真实模型后共享 AI 追问及复盘能力。访客会话自首次进入起保留 30 天。
+示例练习免登录，也可以选择「课程资料问答助手」或「校园通知定时发送服务」。登录后可手动填写项目，或上传简历、核对提取结果再保存。自己的项目可以选定主题练习，在训练记录中回看历次复盘。
 
 ## 本地启动
 
-要求 Node.js 22+、Java 17、Maven 3.9+。在根目录打开两个 PowerShell：
+需要 Node.js 22.12+、Java 17 和 Maven 3.9+。在仓库根目录打开两个 PowerShell，分别运行：
 
 ```powershell
 ./scripts/start-backend.ps1
@@ -24,40 +25,41 @@
 ./scripts/start-frontend.ps1
 ```
 
-访问 **http://localhost:5273/**。后端为 **http://127.0.0.1:8180**，与原项目默认端口分开。默认数据保存在本目录 `backend/data`，不连接原项目数据库。
+浏览器访问 <http://localhost:5273/>。后端默认监听 `127.0.0.1:8180`，H2 数据保存在 `backend/data`。
 
-也可以在 `backend` 执行 `mvn.cmd spring-boot:run`，在 `frontend` 执行 `npm.cmd ci`、`npm.cmd run dev`。Windows 启动脚本支持读取根目录 `.env`；直接用 Maven 启动时需自行提供环境变量。
+也可在 `backend` 运行 `mvn spring-boot:run`，在 `frontend` 运行 `npm ci` 和 `npm run dev`。Windows 启动脚本读取根目录 `.env`，直接运行 Maven 时请通过环境变量提供配置。
 
-要启用真实 AI，把 `.env.example` 复制为 `.env`，填写自己的模型配置。密钥不要放入前端。
-
-示例和自有项目的语音面试均使用百炼转写，服务端配置见 `.env.example`。实时模式在本地检测到发言后，把音频发送到 `qwen3-asr-flash-realtime`，说完后将最终文字提交一次。实时识别不可用时，`qwen3-asr-flash` 会转写本地保留的整段录音。用户可以随时暂停麦克风。实时模式需要同源 `/api` 代理支持 WebSocket 升级。
+本地默认使用规则模式，语音能力默认关闭。启用真实模型和云端语音时，参考 [.env.example](.env.example) 设置服务端环境变量，模型密钥只由后端读取。
 
 ## 构建与验证
 
-```powershell
-# backend 目录
-mvn.cmd package
+在 `backend` 构建 JAR 并运行单元测试：
 
-# frontend 目录
-npm.cmd run build
-npm.cmd exec playwright test -- --config playwright.competition.config.ts
+```sh
+mvn package
 ```
 
-浏览器验收默认使用独立的 5175/18083 端口、合成账号、H2 内存数据库和规则模型。
+在 `frontend` 安装依赖、构建并运行参赛路径的浏览器测试：
 
-如果已经启动本副本，可针对该服务执行（将创建合成测试账号）：
-
-```powershell
-$env:PROBE_TEST_EXTERNAL_URL='http://localhost:5273'
-npm.cmd exec playwright test -- --config playwright.competition.config.ts
+```sh
+npm ci
+npm run build
+npx playwright test --config playwright.competition.config.ts
 ```
 
-前端构建产物为 `frontend/dist`。首页和快捷追问演示可静态部署。示例与自有项目的语音面试、报告及训练记录需要后端和同源 `/api`。
+浏览器测试需要先构建后端 JAR。Windows 使用已安装的 Edge，其他平台先执行 `npx playwright install chromium`。参赛测试默认启动独立的 5175 和 18083 端口，使用合成账号、H2 内存数据库和规则模式。
 
-## 比赛交付
+已启动本地服务时，可在 PowerShell 中先设置 `$env:PROBE_TEST_EXTERNAL_URL = 'http://localhost:5273'`，再运行浏览器测试。测试会创建合成账号。
 
-产品定位、核心流程与验收标准见 [产品设计文档](docs/PRODUCT_DESIGN.md)。参赛准备与三分钟演示脚本见 [docs/COMPETITION.md](docs/COMPETITION.md)，移植来源和验证记录见 [docs/MIGRATION.md](docs/MIGRATION.md)。
+## 实现与部署
 
-本仓库使用关联 Issue 的 PR 协作。每个 PR 的新增与删除行数合计不超过 500；GitHub Actions 会检查行数和 `Closes #编号`。原版源码首次导入为初始化基线，后续改造按依赖顺序分支审阅。
+- **前端**使用 React、TypeScript 和 Vite，采用 Hash 路由，产物在 `frontend/dist`。
+- **后端**使用 Java 17、Spring Boot 和 Flyway，处理项目材料、练习、复盘和会话。
+- **语音**支持百炼实时转写。实时识别不可用时可退回整段录音转写，播报支持云端合成。
+- **部署**中，公开前端由 Qoder Sites 托管，面试和语音连接独立的 HTTPS API。本地 Vite 默认将同源 `/api` 代理到后端。自行部署时需接通后端与会话，实时转写的代理还需支持 WebSocket 升级。
 
-目前仅完成本地开发与验证，**尚未发布到 Qoder Sites，也尚未提交比赛**。本次改造由 Codex 完成；比赛要求的 Qoder 开发、调试与部署过程需实际完成并保留记录，不能把本次记录写成 Qoder 使用证据。
+更多细节见[产品设计](docs/PRODUCT_DESIGN.md)、[参赛准备](docs/COMPETITION.md)和[初始迁移记录](docs/MIGRATION.md)。
+
+## 贡献方式
+
+通过关联 Issue 的 PR 提交。PR 正文使用 `Closes #编号`，新增与删除合计最多 500 行，附上实际验证记录。
