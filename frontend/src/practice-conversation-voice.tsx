@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AudioLines } from "lucide-react";
 import { ApiError, upload } from "./api";
+import { openRealtimeTranscription } from "./practice-realtime-transcription";
 import { encodeWav } from "./voice-input";
 import type { VoiceActivity } from "./voice-activity";
 import "./experience-voice.css";
@@ -15,6 +16,7 @@ type VoiceTarget = {
 type PracticeConversationVoiceProps = VoiceTarget & {
   endpoint: string;
   enabled: boolean;
+  realtime?: boolean;
   suspended: boolean;
   promptPlaying: boolean;
   cancelling?: boolean;
@@ -68,6 +70,10 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
     let speechTimer: number | undefined;
     let request: AbortController | undefined;
     let failedAudio: Blob | undefined;
+    let realtime: ReturnType<typeof openRealtimeTranscription> | undefined;
+    let finishingRealtime: ReturnType<typeof openRealtimeTranscription> | undefined;
+    let recentAudio: Float32Array[] = [];
+    let recentSamples = 0;
     let blocked = false;
     let sending = false;
     let userPaused = false;
@@ -83,6 +89,10 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       && !!target.turnId && !current.current.suspended && sameTarget(target, current.current);
 
     const mute = () => {
+      realtime?.abort();
+      realtime = undefined;
+      recentAudio = [];
+      recentSamples = 0;
       armVersion++;
       if (armed) vad?.pause();
       armed = false;
@@ -107,6 +117,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
     const sync = () => {
       if (!sameTarget(target, current.current)) {
         request?.abort();
+        finishingRealtime?.abort();
         target = {
           turnId: current.current.turnId,
           exchangeCount: current.current.exchangeCount,
@@ -121,6 +132,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       }
       if (!isAvailable()) {
         request?.abort();
+        finishingRealtime?.abort();
         mute();
         setPhase(vad ? "turn-taking" : "connecting");
         return;
@@ -151,7 +163,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       });
     };
 
-    const transcribe = async (audio: Blob) => {
+    const transcribe = async (audio: Blob, streamed?: ReturnType<typeof openRealtimeTranscription>) => {
       if (!isAvailable() || sending) return;
       const audioTarget = target;
       sending = true;
@@ -164,8 +176,15 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       current.current.onProcessing?.(true);
       const controller = new AbortController();
       request = controller;
+      finishingRealtime = streamed;
       try {
-        const result = await upload<{ text: string }>(
+        const realtimeResult = streamed && await streamed.finish();
+        if (!isAvailable() || target !== audioTarget || controller.signal.aborted) return;
+        if (realtimeResult && "reason" in realtimeResult) {
+          console.info("interview_asr_fallback", { reason: realtimeResult.reason });
+          setNotice("实时转写未完成，正在使用录音转写。");
+        }
+        const result = realtimeResult && "text" in realtimeResult ? realtimeResult : await upload<{ text: string }>(
           endpoint + "/transcribe",
           audio,
           "answer.wav",
@@ -173,6 +192,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
           controller.signal,
         );
         if (!isAvailable() || target !== audioTarget || controller.signal.aborted) return;
+        setNotice("");
         const text = result.text?.trim();
         if (!text) {
           setNotice("这段话没有转写出文字，可以再说一次。");
@@ -183,6 +203,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
         await current.current.onUtterance(text);
       } catch (cause) {
         if (!isAvailable() || target !== audioTarget || controller.signal.aborted) return;
+        setNotice("");
         if (cause instanceof ApiError && cause.status === 422) {
           setNotice(cause.message);
         } else if (cause instanceof ApiError && cause.status === 409) {
@@ -196,6 +217,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
           );
         }
       } finally {
+        finishingRealtime = undefined;
         request = undefined;
         sending = false;
         if (!closed) {
@@ -242,6 +264,14 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
             setNotice("");
             setPhase("listening");
             current.current.onListening?.(true);
+            if (current.current.realtime && audio.sampleRate === AUDIO_RATE) {
+              try {
+                realtime = openRealtimeTranscription(endpoint, target.turnId, target.exchangeCount);
+                for (const chunk of recentAudio) realtime.push(chunk);
+                recentAudio = [];
+                recentSamples = 0;
+              } catch { realtime = undefined; }
+            }
             // The practice endpoint accepts up to 180 seconds per segment.
             window.clearTimeout(speechTimer);
             speechTimer = window.setTimeout(() => void vad?.endSegment(), 175_000);
@@ -253,7 +283,9 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
               sync();
               return;
             }
-            void transcribe(encodeWav([samples.subarray(0, AUDIO_LIMIT)], AUDIO_RATE));
+            const streamed = realtime;
+            realtime = undefined;
+            void transcribe(encodeWav([samples.subarray(0, AUDIO_LIMIT)], AUDIO_RATE), streamed);
           },
           () => {
             if (!closed) fail("语音检测中断，请重试麦克风。");
@@ -267,7 +299,15 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
         vad = activity;
         node = new AudioWorkletNode(audio, "voice-recorder");
         node.port.onmessage = (event: MessageEvent<Float32Array>) => {
-          if (capturing && isAvailable()) activity.feed(event.data);
+          if (!capturing || !isAvailable()) return;
+          const frame = event.data;
+          if (realtime) realtime.push(frame);
+          else if (current.current.realtime) {
+            recentAudio.push(frame);
+            recentSamples += frame.length;
+            while (recentSamples > AUDIO_RATE * 0.5 && recentAudio.length > 1) recentSamples -= recentAudio.shift()!.length;
+          }
+          activity.feed(frame);
         };
         const silent = audio.createGain();
         silent.gain.value = 0;
@@ -287,6 +327,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       pause: () => {
         userPaused = true;
         request?.abort();
+        finishingRealtime?.abort();
         mute();
       },
       retry: () => {
@@ -307,6 +348,7 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
       document.removeEventListener("visibilitychange", sync);
       controls.current = null;
       request?.abort();
+      finishingRealtime?.abort();
       mute();
       microphone?.removeEventListener("ended", microphoneEnded);
       stream?.getTracks().forEach(track => track.stop());

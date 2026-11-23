@@ -2,6 +2,65 @@ import { test, expect } from "@playwright/test";
 import { mockHandsFree, mockPracticeVoice, type TestVoiceWindow } from "./practice-voice-fixture";
 import type { Practice } from "../src/use-project-practice";
 
+for (const connection of ["ready", "delayed", "closed"] as const) test(
+  "实时转写只提交一次最终文本 " + connection, async ({ page }) => {
+  const voice = await mockHandsFree(page);
+  await page.route("**/api/config", route => route.fulfill({
+    json: { modelMode: "demo", speechEnabled: true, realtimeSpeechEnabled: true, ttsEnabled: false },
+  }));
+  const origin = new URL(test.info().project.use.baseURL!).origin;
+  const post = async (path: string, data: unknown) => {
+    const response = await page.request.post(path, { headers: { Origin: origin }, data });
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  await post("/api/auth/register", { username: "realtime-" + crypto.randomUUID(), password: "synthetic-practice-password" });
+  const project = await post("/api/projects", { name: "实时转写合成项目" });
+  const endpoint = `/api/projects/${project.id}/practice`;
+  let transmitted = 0;
+  let committed = 0;
+  let batchUploads = 0;
+  let socketOpened = false;
+  const transcript = "我负责预约接口和数据库唯一约束，此约束确保同一时段只写入一条记录。";
+  await page.routeWebSocket(url => url.pathname === endpoint + "/transcribe-stream", socket => {
+    socketOpened = true;
+    socket.onMessage(message => {
+      if (typeof message !== "string") transmitted += message.byteLength;
+      else if (message === "finish") {
+        committed++;
+        socket.send(JSON.stringify({ text: transcript }));
+      }
+    });
+    const ready = () => socket.send(JSON.stringify({ ready: true }));
+    if (connection === "delayed") setTimeout(ready, 1500);
+    else if (connection === "closed") socket.close();
+    else ready();
+  });
+  await page.route("**" + endpoint + "/transcribe", route => {
+    batchUploads++;
+    return route.fulfill({ json: { text: transcript } });
+  });
+  const submissions: unknown[] = [];
+  page.on("request", request => {
+    if (request.method() !== "POST") return;
+    const path = new URL(request.url()).pathname;
+    if (path === endpoint && request.postDataJSON().answer) submissions.push(request.postDataJSON().answer);
+  });
+  await page.goto(`/#/projects/${project.id}?interview=1`);
+  await page.getByRole("button", { name: "同意并开始语音面试" }).click();
+  await expect.poll(voice.micState).toEqual(["live", true]);
+  expect(socketOpened).toBe(false);
+  await voice.beginSpeech();
+  await expect.poll(() => socketOpened).toBe(true);
+  if (connection === "ready") await expect.poll(() => transmitted).toBeGreaterThan(0);
+  expect(submissions).toEqual([]);
+  expect(committed).toBe(0);
+  await voice.endSpeech();
+  await expect.poll(() => submissions).toEqual([transcript]);
+  expect(committed).toBe(connection === "closed" ? 0 : 1);
+  expect(batchUploads).toBe(connection === "closed" ? 1 : 0);
+});
+
 test("面试完成后进入本场报告，项目材料单独编辑，复练后仍可回看", async ({ page }) => {
   const firstAnswer = "我负责接口与数据库约束：同一座位时段只写入一条预约，冲突回滚，并发尚未验证。";
   const voice = await mockPracticeVoice(page, () => firstAnswer);
