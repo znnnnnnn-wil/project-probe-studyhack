@@ -48,17 +48,19 @@
 }
 
 .probe-hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 408px;
+  gap: 12px;
   margin-top: 26px;
 }
 
 .probe-hero-actions .button {
-  min-height: 52px;
-  padding-inline: 17px;
-  font-size: 16px;
+  min-height: 64px;
+  gap: 8px;
+  padding-inline: clamp(8px, 1vw, 18px);
+  font-size: 20px;
+  text-align: center;
 }
 
 .probe-backend-note {
@@ -373,6 +375,7 @@
 
 @media (max-width: 1130px) {
   .probe-hero-grid { grid-template-columns: minmax(0, .8fr) minmax(0, 1.1fr); gap: 27px; }
+  .probe-hero-actions .button { font-size: 18px; }
   .probe-preview-body { grid-template-columns: 92px minmax(0, 1fr); }
   .probe-preview-rounds button { gap: 5px; padding-inline: 5px; }
   .probe-preview-content { padding-inline: 16px; }
@@ -398,7 +401,7 @@
   .probe-hero-copy h1 { font-size: clamp(39px, 10.7vw, 55px); }
   .probe-hero-intro { margin-top: 16px; font-size: 15px; line-height: 1.75; }
   .probe-hero-actions { gap: 8px; margin-top: 17px; }
-  .probe-hero-actions .button { min-height: 46px; padding-inline: 13px; font-size: 14px; }
+  .probe-hero-actions .button { min-height: 56px; font-size: 16px; }
   .probe-preview-head { min-height: 52px; padding: 8px 11px; }
   .probe-preview-head h2 { font-size: 14px; }
   .probe-preview-body { grid-template-columns: minmax(0, 1fr); }
