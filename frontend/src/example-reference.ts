@@ -89,6 +89,11 @@ export function exampleReferenceAnswer(
   if (example?.id === "booking" && (conflictResponse || constraintError)) {
     return available("我会把唯一约束冲突转成 409 响应，提示“该座位已被预约”。");
   }
+  if (example?.id === "rag" && followUp &&
+      question === "可以用一次具体的请求举例，讲讲你是怎么处理的吗？" &&
+      /检索|召回|找原文/.test(followUp.answer)) {
+    return available(answers.rag.implementation);
+  }
   if (followUp) return "";
   const field = topicFor(question, turn.topic);
   return available(validLength(example && answers[example.id]?.[field]) || validLength(project[field]));
