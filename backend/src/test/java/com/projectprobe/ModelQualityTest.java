@@ -191,4 +191,22 @@ class ModelQualityTest {
     assertTrue(chosen.referenceAnswer().contains("段落编号"));
     assertEquals(1, rules.size());
   }
+
+  @Test void combinedDecisionPassesTheCandidateThroughReviewWithoutAnotherGenerationCall() {
+    var rules = new ArrayList<String>();
+    var practice = body();
+    practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "interviewTopic", "并发预约"));
+    var turn = list(practice, "turns").get(0);
+    String answer = str(turn, "answer");
+    var candidate = Map.<String, Object>of("question", "请说明预约记录的唯一约束应由哪些字段组成。", "topic", "唯一约束设计");
+    var decision = Map.<String, Object>of("decision", "ADVANCE", "reply", "我们看下一题。", "evidence", answer, "nextQuestion", candidate);
+    var model = queued(List.of(decision, Map.of("issues", List.of())), rules);
+    model.questionDeadline.set(now() + 80_000);
+    var reply = PracticeDialogue.decide(model, practice, turn, answer);
+    assertTrue(reply.advance());
+    assertEquals(candidate.get("question"), model.question(practice, reply.nextQuestion()).question());
+    assertEquals(2, rules.size());
+    assertTrue(rules.get(0).contains("nextQuestion"));
+    assertTrue(rules.get(1).startsWith(ModelQuality.QUESTION_RULE));
+  }
 }
