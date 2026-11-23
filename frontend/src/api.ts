@@ -1,5 +1,19 @@
 import exampleProjects from "../../backend/src/main/resources/example-projects.json" with { type: "json" };
 
+const apiBase = (import.meta.env.VITE_API_BASE?.trim() || "/api").replace(/\/+$/, "");
+
+export function apiUrl(path: string) {
+  return new URL(apiBase + path, location.origin);
+}
+
+export function fetchApi(path: string, options: RequestInit) {
+  const url = apiUrl(path);
+  return fetch(url, {
+    ...options,
+    credentials: url.origin === location.origin ? "same-origin" : "include",
+  });
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -16,9 +30,8 @@ export async function api<T>(
   signal?: AbortSignal,
   onSentence?: (sentence: string, speechTicket?: string) => void,
 ): Promise<T> {
-  const response = await fetch("/api" + path, {
+  const response = await fetchApi(path, {
     method,
-    credentials: "same-origin",
     signal,
     headers: { "Content-Type": "application/json", ...(onSentence ? { Accept: "application/x-ndjson" } : {}) },
     ...(data === undefined ? {} : { body: JSON.stringify(data) }),
@@ -79,9 +92,8 @@ export async function upload<T>(
   const data = new FormData();
   data.append("file", file, filename);
   for (const [key, value] of Object.entries(extra)) data.append(key, value);
-  const response = await fetch("/api" + path, {
+  const response = await fetchApi(path, {
     method: "POST",
-    credentials: "same-origin",
     body: data,
     signal,
   });
