@@ -4,6 +4,8 @@ import static com.projectprobe.Store.*;
 import static org.junit.jupiter.api.Assertions.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.web.server.ResponseStatusException;
 
 class ModelQualityTest {
@@ -206,22 +208,24 @@ class ModelQualityTest {
     assertEquals(1, rules.size());
   }
 
-  @Test void combinedDecisionPassesTheCandidateThroughReviewWithoutAnotherGenerationCall() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void combinedDecisionOnlyReviewsCandidatesForOwnProjects(boolean example) {
     var rules = new ArrayList<String>();
     var practice = body();
-    practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "interviewTopic", "并发预约"));
+    practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "interviewTopic", "并发预约", "example", example));
     var turn = list(practice, "turns").get(0);
     String answer = str(turn, "answer");
     var candidate = Map.<String, Object>of("question", "请说明预约记录的唯一约束应由哪些字段组成。", "topic", "唯一约束设计");
     var decision = Map.<String, Object>of("decision", "ADVANCE", "reply", "我们看下一题。", "evidence", answer, "nextQuestion", candidate);
-    var model = queued(List.of(decision, Map.of("issues", List.of())), rules);
+    var model = queued(example ? List.of(decision) : List.of(decision, Map.of("issues", List.of())), rules);
     model.questionDeadline.set(now() + 80_000);
     var reply = PracticeDialogue.decide(model, practice, turn, answer);
     assertTrue(reply.advance());
     assertEquals(candidate.get("question"), model.question(practice, reply.nextQuestion()).question());
-    assertEquals(2, rules.size());
+    assertEquals(example ? 1 : 2, rules.size());
     assertTrue(rules.get(0).contains("nextQuestion"));
-    assertTrue(rules.get(1).startsWith(ModelQuality.QUESTION_RULE));
+    if (!example) assertTrue(rules.get(1).startsWith(ModelQuality.QUESTION_RULE));
   }
 
   @Test void firstExplanationSentenceIsEmittedBeforeTheModelFinishes() {

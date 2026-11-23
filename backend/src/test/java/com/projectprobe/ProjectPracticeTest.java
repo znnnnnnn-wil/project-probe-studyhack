@@ -400,14 +400,10 @@ class ProjectPracticeTest {
   @Test void exampleFallbackQuestionsFollowEachScenarioAndChangeAcrossNewRounds() {
     String user = id();
     s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
-    var rejections = List.of(Map.of("code", "UNSUPPORTED_PREMISE", "reason", "材料尚未确认这个实现"));
     var model = new ModelService(s, "live", "https://never-called.invalid", "synthetic", "synthetic", "test") {
       @Override Map<String, Object> call(String rule, Object data) {
-        if (rule.startsWith(ModelQuality.QUESTION_RULE)) return Map.of("issues", rejections);
-        if (((Map<?, ?>) data).get("repair") instanceof Map<?, ?> repair) {
-          assertEquals(rejections, repair.get("reviewIssues"));
-        }
-        return Map.of("question", "请说明你负责的功能。", "topic", "项目职责");
+        assertFalse(rule.startsWith(ModelQuality.QUESTION_RULE));
+        throw error(503, "模型暂不可用");
       }
     };
     model.qualityReviewEnabled = true;

@@ -685,7 +685,9 @@ class CompetitionPracticeTest {
     }
   }
 
-  @Test void exampleResumesFailedOpeningWhenBothCandidatesRepeatAnsweredHistory() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void exampleOpeningIgnoresPreviouslyAnsweredQuestions(boolean resume) {
     String user = fixture()[0];
     String projectId = ExampleQuestions.projectId(user, "booking");
     var project = projects.openExample(user, projectId, Map.of("name", "校园自习室预约系统",
@@ -695,29 +697,38 @@ class CompetitionPracticeTest {
     var answered = Map.of("id", id(), "question", repeated.question(), "topic", repeated.topic(),
       "answer", repeated.referenceAnswer(), "answeredIndependently", true,
       "exchanges", List.of(Map.of("answer", repeated.referenceAnswer(), "reply", "下一题。")));
+    String completedRoundId = id();
     s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
-      user, projectId, id(), 1, now(), "COMPLETED", s.encode(Map.of("modelMode", "live", "turns", List.of(answered))));
+      user, projectId, completedRoundId, 1, now(), "COMPLETED", s.encode(Map.of("modelMode", "live", "turns", List.of(answered))));
     String failedRoundId = id();
     var history = PracticeRoundHistory.load(s, user, projectId, "live");
     assertEquals(PracticeRoundHistory.ANSWERED_INDEPENDENTLY, history.get(0).get("outcome"));
-    s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
+    if (resume) s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
       user, projectId, failedRoundId, 2, now(), "FAILED", s.encode(Map.of("modelMode", "live", "turns", List.of(),
         "project", project, "kind", "PRACTICE", "maxTurns", 5, "practiceHistory", history)));
 
     var model = dialogueModel();
-    doReturn(Map.of("question", repeated.question(), "topic", repeated.topic())).when(model).call(anyString(), any());
+    model.qualityReviewEnabled = true;
+    doAnswer(call -> {
+      assertFalse(((String) call.getArgument(0)).startsWith(ModelQuality.QUESTION_RULE));
+      assertFalse(PracticeRetest.object(call.getArgument(1)).containsKey("practiceHistory"));
+      return Map.of("question", repeated.question(), "topic", repeated.topic(),
+        ExampleReference.FIELD, repeated.referenceAnswer());
+    }).when(model).call(anyString(), any());
     var service = new ProjectPractice(s, projects, model);
+    service.maxTurns = 5;
     service.journey = practice.journey;
-    var state = service.run(user, projectId, Map.of(), true);
+    var state = service.run(user, projectId,
+      resume ? Map.of() : Map.of("restart", true, "roundId", completedRoundId), true);
 
     assertEquals("ACTIVE", state.get("status"));
-    assertEquals(failedRoundId, state.get("roundId"));
-    var next = ExampleQuestions.fallbackFor(example).get(2);
+    assertEquals(2L, state.get("roundNumber"));
+    if (resume) assertEquals(failedRoundId, state.get("roundId"));
+    assertFalse(state.containsKey("practiceHistory"));
     var opener = list(state, "turns").get(0);
-    assertEquals(next.question(), opener.get("question"));
-    assertEquals(next.referenceAnswer(), opener.get(ExampleReference.FIELD));
-    verify(model, times(2)).call(anyString(), any());
-    verify(model).call(anyString(), argThat(input -> PracticeRetest.object(input).containsKey("repair")));
+    assertEquals(repeated.question(), opener.get("question"));
+    assertEquals(repeated.referenceAnswer(), opener.get(ExampleReference.FIELD));
+    verify(model, times(1)).call(anyString(), any());
   }
 
   @ParameterizedTest
