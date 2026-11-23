@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchApi } from "./api";
 
 type SpeechTarget = { endpoint: string } & (
   { turnId: string; exchangeCount?: number } | { sentence: string; speechTicket: string }
@@ -128,11 +129,10 @@ export function useQuestionSpeech(ttsEnabled = false) {
           return;
         }
         const { endpoint, ...payload } = target;
-        const response = await fetch(
-          "/api" + endpoint + "/tts",
+        const response = await fetchApi(
+          endpoint + "/tts",
           {
             method: "POST",
-            credentials: "same-origin",
             signal: controller.signal,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),

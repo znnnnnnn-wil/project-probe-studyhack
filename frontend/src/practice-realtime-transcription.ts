@@ -1,9 +1,11 @@
+import { apiUrl } from "./api";
+
 type RealtimeResult = { text: string } | { reason: string };
 const CONNECT_TIMEOUT = 4200;
 const FINAL_TEXT_TIMEOUT = 3200;
 
 export function openRealtimeTranscription(endpoint: string, turnId: string, exchangeCount: number) {
-  const url = new URL("/api" + endpoint + "/transcribe-stream", location.href);
+  const url = apiUrl(endpoint + "/transcribe-stream");
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.search = new URLSearchParams({ turnId, exchangeCount: String(exchangeCount) }).toString();
   const socket = new WebSocket(url);
