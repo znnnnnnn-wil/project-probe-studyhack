@@ -60,24 +60,6 @@
   padding-inline: 15px;
 }
 
-.probe-hero-note {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.probe-hero-note a {
-  color: var(--blue);
-}
-
-.probe-hero-note a:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 .probe-backend-note {
   margin: 3px 0 0;
   color: var(--muted);
