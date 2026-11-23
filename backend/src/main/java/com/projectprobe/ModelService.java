@@ -499,7 +499,7 @@ public class ModelService {
           input.put("repair", repair);
           rule += " 上次输出未通过校验。按 repair 修复，只问一个主要目标，题干不包含答案。"
             + "REPEATED_GOAL 时改问材料中另一具体目标，可偏离原定评分维度。UNSUPPORTED_PREMISE 时去掉无依据的前提，依据材料开放提问。"
-            + "确需沿用考点检验新条件时，以‘假设’说明条件并返回 changedCondition 原文。复测始终紧扣 focus 和首题变化条件。";
+             + "同一类别下考察不同的具体问题可以通过。复测始终紧扣 focus 和首题变化条件。";
           if (!practiceHistory.isEmpty())
             rule += " 跨场已独立答清的目标必须换考点。若有 practiceReview，只修正该复测题并保留选定目标。";
         }
@@ -629,10 +629,8 @@ public class ModelService {
   Map<String, Object> questionInput(Map<String, Object> body) {
     var input = new LinkedHashMap<String, Object>();
     input.put("coverage", QuestionCoverage.summarize(body));
-    input.put("askedGoals", QuestionCoverage.budgets(body));
-    input.put("coveragePolicy", "askedGoals按规则汇总本轮已问目标。已有目标只能在明确改变假设条件时再问，并返回changedCondition（新条件原文，出现在问题中）；否则换一个未覆盖目标。不要反复要求同一个方法签名或事务边界。用户明确暂时不会时先记录缺口，转下个目标。规则分类不代表掌握情况。");
     input.put("difficulty", body.getOrDefault("difficulty", "IMPLEMENTATION"));
-    input.put("questionPolicy", "先选coverage中未覆盖或自报待补充的具体目标；已有回答的主题须指出缺口或改变条件才追问。已有回答不等于掌握。BASIC聚焦职责与正常流程，IMPLEMENTATION聚焦实现细节，TRADEOFF聚焦故障与方案取舍。不得预设未提供的组件。每题180字以内，最多一个问号。");
+    input.put("questionPolicy", "优先选择coverage中未覆盖或自报待补充的具体目标。同一类别内可以考察不同的具体问题；沿用同一具体目标时，应指出回答缺口或改变条件。用户明确暂时不会时先记录缺口，转下个目标。已有回答不等于掌握。BASIC聚焦职责与正常流程，IMPLEMENTATION聚焦实现细节，TRADEOFF聚焦故障与方案取舍。不得预设未提供的组件。每题180字以内，最多一个问号。");
     String scoringFocus = QuestionCoverage.practiceScoringFocus(body);
     if (!scoringFocus.isBlank()) input.put("practiceScoringFocus", scoringFocus);
     if (!str(body, "interviewTopic").isBlank()) input.put("interviewTopic", body.get("interviewTopic"));

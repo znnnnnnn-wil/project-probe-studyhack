@@ -179,6 +179,20 @@ class ModelQualityTest {
     assertEquals(List.of("generate", "review"), calls);
   }
 
+  @Test void aDifferentVerificationQuestionReachesReviewAfterTwoVerificationQuestions() {
+    var practice = body();
+    practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "turns", List.of(
+      Map.of("question", "怎么测试并发预约只成功一笔？", "topic", "并发预约测试", "answer", "并行发请求后查库。"),
+      Map.of("question", "怎么测试取消不存在的预约？", "topic", "无效预约测试", "answer", "传入无效 ID 并检查响应。"))));
+    var candidate = Map.<String, Object>of("question", "怎么测试普通用户只能取消自己的预约？", "topic", "预约权限测试");
+    var rules = new ArrayList<String>();
+    var model = queued(List.of(Map.of("issues", List.of())), rules);
+
+    assertEquals(candidate.get("question"), model.question(practice, candidate).question());
+    assertEquals(1, rules.size());
+    assertTrue(rules.get(0).startsWith(ModelQuality.QUESTION_RULE));
+  }
+
   @Test void genericOpeningFromTheModelIsReplacedByAnExampleSpecificQuestion() {
     var practice = body();
     practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "example", true, "exampleScenario", "rag",
