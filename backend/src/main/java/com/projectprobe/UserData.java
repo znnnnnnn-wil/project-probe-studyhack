@@ -12,7 +12,6 @@ class UserData {
     int active = s.db.queryForObject("SELECT COUNT(*) FROM trainings WHERE user_id=? AND status='GENERATING' AND lease_until>?", Integer.class, user, now());
     active += s.db.queryForObject("SELECT COUNT(*) FROM project_practice_rounds WHERE user_id=? AND lease_until>?", Integer.class, user, now());
     active += s.db.queryForObject("SELECT COUNT(*) FROM material_jobs WHERE user_id=? AND expires_at>?", Integer.class, user, now());
-    active += s.db.queryForObject("SELECT COUNT(*) FROM extraction_limits WHERE user_id=? AND lease_until>?", Integer.class, user, now());
     if (active > 0) throw error(409, "仍有生成或导入任务，请等待完成或恢复后再清理");
   }
   void eraseProject(String user, String projectId) {

@@ -36,7 +36,6 @@ app:
   model-queue-wait-ms: ${MODEL_QUEUE_WAIT_MS:3000}
   model-evidence-spans-required: ${MODEL_EVIDENCE_SPANS_REQUIRED:true}
   model-quality-review-enabled: ${MODEL_QUALITY_REVIEW_ENABLED:false}
-  extraction-daily-limit: ${EXTRACTION_DAILY_LIMIT:20}
   model-free-quota-only: ${MODEL_FREE_QUOTA_ONLY:false}
   model-free-quota-confirmed-model: ${MODEL_FREE_QUOTA_CONFIRMED_MODEL:}
   model-url: ${MODEL_BASE_URL:https://api.openai.com/v1}
