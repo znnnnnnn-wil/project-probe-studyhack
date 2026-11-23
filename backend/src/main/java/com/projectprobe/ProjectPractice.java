@@ -296,8 +296,9 @@ class ProjectPractice {
         return null;
       });
     } catch (Exception e) {
-      log.warn("practice_generation_failed roundId={} exceptionType={} locations={}", roundId,
-        e.getClass().getName(), Arrays.stream(e.getStackTrace()).limit(6).toList());
+      var reviewIssueCodes = e instanceof ModelQuality.Rejected rejected ? rejected.issueCodes() : List.<String>of();
+      log.warn("practice_generation_failed roundId={} exceptionType={} reviewIssueCodes={} locations={}", roundId,
+        e.getClass().getName(), reviewIssueCodes, Arrays.stream(e.getStackTrace()).limit(6).toList());
       s.db.update("UPDATE project_practice_rounds SET status='FAILED',lease_until=0 WHERE user_id=? AND round_id=? AND lease_token=?", user, roundId, token);
       if (e instanceof ModelContext.TooLarge limit) throw limit;
       throw error(503, "练习生成失败，已保存进度，可在原项目重试");

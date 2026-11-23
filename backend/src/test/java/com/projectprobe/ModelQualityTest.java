@@ -85,25 +85,14 @@ class ModelQualityTest {
       assertThrows(ResponseStatusException.class, () -> ModelQuality.report(Map.of("checks", checks), claims, result));
     assertThrows(ResponseStatusException.class, () -> ModelQuality.report(Map.of(), claims, result));
   }
-  @Test void semanticQuestionCheckCatchesParaphrasesAndUnsupportedFrameworks() {
-    for (String code : List.of("REPEATED_GOAL", "UNSUPPORTED_PREMISE", "OFF_TARGET", "CONTRADICTORY_CONDITION")) {
-      var rules = new ArrayList<String>();
-      var reject = Map.<String, Object>of("issues", List.of(Map.of("code", code, "reason", "重复目标或预设了未提供的实现")));
-      var first = Map.<String, Object>of("question", "请说明你如何保证查询结果正确。", "topic", "验证方法");
-      var repaired = Map.<String, Object>of("question", "请说明实际使用的数据访问方式。", "topic", "查询实现");
-      var model = queued(List.of(first, reject, repaired, Map.of("issues", List.of())), rules);
-      assertEquals(repaired.get("question"), model.firstDeepQuestion(body()).question());
-      assertEquals(4, rules.size());
-    }
-  }
   @Test void malformedQuestionReviewDoesNotSilentlyPass() {
-    assertThrows(ResponseStatusException.class, () -> ModelQuality.question(Map.of("passed", true)));
-    assertThrows(ResponseStatusException.class, () -> ModelQuality.question(Map.of("issues", List.of(Map.of("code", "UNKNOWN", "reason", "x")))));
-    ModelQuality.question(Map.of("issues", List.of()));
+    assertThrows(ResponseStatusException.class, () -> ModelQuality.question(Map.of("passed", true), "", Map.of(), false));
+    assertThrows(ResponseStatusException.class, () -> ModelQuality.question(Map.of("issues", List.of(Map.of("code", "UNKNOWN", "reason", "x"))), "", Map.of(), false));
+    ModelQuality.question(Map.of("issues", List.of()), "", Map.of(), false);
   }
   @Test void rejectedReasonsStayOutOfSharedLogsButRemainAvailableToTheOwner() {
     var failure = assertThrows(ModelQuality.Rejected.class, () -> ModelQuality.question(Map.of("issues", List.of(
-      Map.of("code", "UNSUPPORTED_PREMISE", "reason", "合成私人原文中的框架尚未声明")))));
+      Map.of("code", "UNSUPPORTED_PREMISE", "reason", "合成私人原文中的框架尚未声明"))), "", Map.of(), false));
     assertEquals("QUESTION", failure.diagnostic.get("stage"));
     assertEquals("semantic_review_failed", ModelQuality.logReason(failure.getReason()));
     assertFalse(ModelQuality.logReason(failure.getReason()).contains("私人原文"));
@@ -128,4 +117,65 @@ class ModelQualityTest {
       quote("PT1", "我不知道怎样验证"), quote("T1", "计划发起两个请求"))))), claims, new LinkedHashMap<>());
   }
   Map<String, Object> source(String id, String text, String turn) { return ModelQuality.source(id, text, turn); }
+
+  @Test void semanticQuestionCheckStillRejectsUnsupportedPremisesAndOffTopicQuestions() {
+    for (String code : List.of("UNSUPPORTED_PREMISE", "OFF_TARGET", "CONTRADICTORY_CONDITION")) {
+      var rules = new ArrayList<String>();
+      var reject = Map.<String, Object>of("issues", List.of(Map.of("code", code, "reason", "重复目标或预设了未提供的实现")));
+      var first = Map.<String, Object>of("question", "请说明你如何保证查询结果正确。", "topic", "验证方法");
+      var repaired = Map.<String, Object>of("question", "请说明实际使用的数据访问方式。", "topic", "查询实现");
+      var model = queued(List.of(first, reject, repaired, Map.of("issues", List.of())), rules);
+      assertEquals(repaired.get("question"), model.firstDeepQuestion(body()).question());
+      assertEquals(4, rules.size());
+    }
+  }
+
+  @Test void sharedTopicAndUngroundedRepeatVerdictsDoNotBlockADifferentQuestion() {
+    var practice = body();
+    var old = Map.of("id", "cut-1", "question", "请说明讲义切分时怎样确定片段边界。", "topic", "讲义切分",
+      "outcome", PracticeRoundHistory.ANSWERED_INDEPENDENTLY);
+    practice.put("practiceHistory", List.of(old));
+    var candidate = Map.<String, Object>of("question", "请说明你会怎样验证讲义切分的效果。", "topic", "讲义切分");
+    var falsePositive = Map.of("code", "REPEATED_GOAL", "reason", "两道题都谈到切分。");
+    for (var issue : List.of(falsePositive,
+        Map.of("code", "REPEATED_GOAL", "reason", "两道题都谈到切分。", "previousQuestionId", "cut-1",
+          "previousGoalQuote", "怎样确定片段边界", "candidateGoalQuote", "怎样确定片段边界"),
+        Map.of("code", "REPEATED_GOAL", "reason", "两道题都谈到切分。", "previousQuestionId", "cut-1",
+          "previousGoalQuote", "讲义切分", "candidateGoalQuote", "讲义切分"),
+        Map.of("code", "REPEATED_GOAL", "previousQuestionId", "cut-1",
+          "previousGoalQuote", "怎样确定片段边界", "candidateGoalQuote", "怎样验证讲义切分的效果"),
+        Map.of("code", "REPEATED_GOAL", "reason", "两道题都谈到切分。", "previousQuestionId", "unknown",
+          "previousGoalQuote", "怎样确定片段边界", "candidateGoalQuote", "怎样验证讲义切分的效果"))) {
+      var rules = new ArrayList<String>();
+      var model = queued(List.of(candidate, Map.of("issues", List.of(issue))), rules);
+      assertEquals(candidate.get("question"), model.question(practice).question());
+      assertEquals(2, rules.size());
+    }
+  }
+
+  @Test void plannedScoringDimensionGuidesGenerationWithoutRestrictingQuestionReview() {
+    var practice = body();
+    practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "interviewTopic", "并发预约"));
+    var candidate = Map.<String, Object>of("question", "请说明预约记录的唯一约束应由哪些字段组成。", "topic", "唯一约束设计");
+    var calls = new ArrayList<String>();
+    var model = new ModelService(store, "live", "https://never-called.invalid", "synthetic", "synthetic", "test") {
+      @Override Map<String, Object> call(String rule, Object data) {
+        var input = (Map<?, ?>) data;
+        if (rule.startsWith(ModelQuality.QUESTION_RULE)) {
+          calls.add("review");
+          var context = (Map<?, ?>) input.get("context");
+          assertEquals("并发预约", context.get("interviewTopic"));
+          assertFalse(context.containsKey("practiceScoringFocus"));
+          assertFalse(rule.contains("practiceScoringFocus"));
+          return Map.of("issues", List.of());
+        }
+        calls.add("generate");
+        assertTrue(input.get("practiceScoringFocus").toString().startsWith("表达清晰度"));
+        return candidate;
+      }
+    };
+    model.qualityReviewEnabled = true;
+    assertEquals(candidate.get("question"), model.question(practice).question());
+    assertEquals(List.of("generate", "review"), calls);
+  }
 }
