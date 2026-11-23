@@ -56,4 +56,3 @@ app:
   tts-voice: ${TTS_VOICE:longcheng_v2}
   tts-url: ${TTS_BASE_URL:wss://dashscope.aliyuncs.com/api-ws/v1/inference}
   tts-key: ${TTS_API_KEY:}
-  tts-daily-limit: ${TTS_DAILY_LIMIT:60}

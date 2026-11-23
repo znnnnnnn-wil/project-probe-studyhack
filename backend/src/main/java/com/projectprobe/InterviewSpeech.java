@@ -19,7 +19,6 @@ public class InterviewSpeech {
 
   final Store s;
   final ModelService model;
-  final InputService inputs;
   final ProjectPractice practice;
   final HttpClient client = HttpClient.newBuilder()
     .connectTimeout(Duration.ofSeconds(8))
@@ -46,13 +45,9 @@ public class InterviewSpeech {
   @Value("${app.tts-key:}")
   String ttsKey;
 
-  @Value("${app.tts-daily-limit:60}")
-  int dailyLimit;
-
-  InterviewSpeech(Store s, ModelService model, InputService inputs, ProjectPractice practice) {
+  InterviewSpeech(Store s, ModelService model, ProjectPractice practice) {
     this.s = s;
     this.model = model;
-    this.inputs = inputs;
     this.practice = practice;
   }
 
@@ -83,10 +78,7 @@ public class InterviewSpeech {
     if (!ttsReady()) throw error(503, "面试官语音暂未配置，将使用浏览器播报");
     String text = practice.speechPrompt(user, projectId, turnId, exchangeCount);
     if (text.isBlank() || text.length() > 650) throw error(409, "当前问题不支持语音播报");
-    inputs.limited(user, "TTS", Math.max(1, Math.min(dailyLimit, 200)), () -> {
-      synthesize(text, response);
-      return Boolean.TRUE;
-    });
+    synthesize(text, response);
   }
 
   void synthesize(String text, HttpServletResponse response) {

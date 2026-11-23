@@ -278,7 +278,7 @@ public class InputService {
     return ResumeExtraction.validate(output, text);
   }
 
-  Map<String, Object> transcribe(String user, MultipartFile file) {
+  Map<String, Object> transcribe(MultipartFile file) {
     if (!speechReady()) throw error(503, "语音识别暂未配置，仍可使用文字回答");
     byte[] audio;
     try {
@@ -287,90 +287,82 @@ public class InputService {
       throw error(400, "录音读取失败，请重新录制");
     }
     validateWav(audio);
-    final byte[] data = audio;
-    return limited(
-      user,
-      "SPEECH",
-      0,
-      () -> {
-        var body = Map.of(
-          "model",
-          speechModel,
-          "stream",
-          false,
-          "asr_options",
-          Map.of("enable_itn", false),
-          "messages",
+    var body = Map.of(
+      "model",
+      speechModel,
+      "stream",
+      false,
+      "asr_options",
+      Map.of("enable_itn", false),
+      "messages",
+      List.of(
+        Map.of(
+          "role",
+          "user",
+          "content",
           List.of(
             Map.of(
-              "role",
-              "user",
-              "content",
-              List.of(
-                Map.of(
-                  "type",
-                  "input_audio",
-                  "input_audio",
-                  Map.of(
-                    "data",
-                    "data:audio/wav;base64," +
-                      Base64.getEncoder().encodeToString(data)
-                  )
-                )
+              "type",
+              "input_audio",
+              "input_audio",
+              Map.of(
+                "data",
+                "data:audio/wav;base64," +
+                  Base64.getEncoder().encodeToString(audio)
               )
             )
           )
-        );
-        try {
-          var request = HttpRequest.newBuilder(
-            URI.create(speechUrl.replaceAll("/$", "") + "/chat/completions")
-          )
-            .timeout(Duration.ofSeconds(60))
-            .header("Content-Type", "application/json")
-            .header(
-              "Authorization",
-              "Bearer " + (speechKey.isBlank() ? model.key : speechKey)
-            )
-            .POST(HttpRequest.BodyPublishers.ofString(s.encode(body)))
-            .build();
-          var response = client.send(request, BoundedBody.handler(400000));
-          if (response.statusCode() != 200) throw error(
-            503,
-            response.statusCode() == 403
-              ? "语音转写暂不可用，请使用文字回答"
-              : "语音识别服务暂不可用，请稍后再试"
-          );
-          if (response.body().length() > 100000) throw error(
-            503,
-            "语音识别响应过大"
-          );
-          var root = s.json.readTree(response.body());
-          String result = root
-            .path("choices")
-            .path(0)
-            .path("message")
-            .path("content")
-            .asText("")
-            .strip();
-          if (result.isBlank()) throw error(
-            422,
-            "没有识别到语音，请检查麦克风后重试"
-          );
-          if (result.length() > 6000) throw error(
-            422,
-            "转写超过6000字，请分段录音"
-          );
-          return Map.of("text", result);
-        } catch (org.springframework.web.server.ResponseStatusException e) {
-          throw e;
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          throw error(503, "语音识别已中断，请重试");
-        } catch (Exception e) {
-          throw error(503, "语音识别超时或响应异常，录音未提交为回答，可重试");
-        }
-      }
+        )
+      )
     );
+    try {
+      var request = HttpRequest.newBuilder(
+        URI.create(speechUrl.replaceAll("/$", "") + "/chat/completions")
+      )
+        .timeout(Duration.ofSeconds(60))
+        .header("Content-Type", "application/json")
+        .header(
+          "Authorization",
+          "Bearer " + (speechKey.isBlank() ? model.key : speechKey)
+        )
+        .POST(HttpRequest.BodyPublishers.ofString(s.encode(body)))
+        .build();
+      var response = client.send(request, BoundedBody.handler(400000));
+      if (response.statusCode() != 200) throw error(
+        503,
+        response.statusCode() == 403
+          ? "语音转写暂不可用，请使用文字回答"
+          : "语音识别服务暂不可用，请稍后再试"
+      );
+      if (response.body().length() > 100000) throw error(
+        503,
+        "语音识别响应过大"
+      );
+      var root = s.json.readTree(response.body());
+      String result = root
+        .path("choices")
+        .path(0)
+        .path("message")
+        .path("content")
+        .asText("")
+        .strip();
+      if (result.isBlank()) throw error(
+        422,
+        "没有识别到语音，请检查麦克风后重试"
+      );
+      if (result.length() > 6000) throw error(
+        422,
+        "转写超过6000字，请分段录音"
+      );
+      return Map.of("text", result);
+    } catch (org.springframework.web.server.ResponseStatusException e) {
+      throw e;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw error(503, "语音识别已中断，请重试");
+    } catch (Exception e) {
+      throw error(503, "语音识别超时或响应异常，录音未提交为回答，可重试");
+    }
   }
 
   static void validateWav(byte[] bytes) {

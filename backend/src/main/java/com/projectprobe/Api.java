@@ -164,7 +164,7 @@ public class Api {
       !Store.str(turns.get(turns.size() - 1), "answer").isBlank()
     ) throw Store.error(409, "本题已结束，请重新加载当前问题");
     TrainingService.requireQuestionVersion(turns.get(turns.size() - 1), Map.of("questionVersion", questionVersion));
-    return inputs.transcribe(user, file);
+    return inputs.transcribe(file);
   }
 
   @PostMapping("/projects/{id}/confirm")

@@ -846,18 +846,16 @@ class InputRegressionTest {
   void disabledSpeechDoesNotCallProvider() {
     assertFalse(inputs.speechReady());
     assertThrows(ResponseStatusException.class, () ->
-      inputs.transcribe(user(), file("x.wav", wav(16000, 1)))
+      inputs.transcribe(file("x.wav", wav(16000, 1)))
     );
   }
 
   @Test
   @SuppressWarnings("unchecked")
-  void speechTranscriptionIgnoresExhaustedQuotaWithoutGrowingCounter() throws Exception {
+  void recordingTranscriptionAcceptsOverlappingCallsAndIgnoresOldCounters() throws Exception {
     String user = user();
-    s.db.update(
-      "INSERT INTO input_limits(user_id,kind,window_start,attempts) VALUES (?,'SPEECH',?,?)",
-      user, now(), Integer.MAX_VALUE
-    );
+    s.db.update("INSERT INTO input_limits(user_id,kind,window_start,attempts,lease_until) VALUES (?,'SPEECH',?,?,?)",
+      user, now(), Integer.MAX_VALUE, now() + 90_000);
     var service = spy(new InputService(s, inputs.model));
     doReturn(true).when(service).speechReady();
     service.speechUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -866,47 +864,27 @@ class InputRegressionTest {
     var client = mock(HttpClient.class);
     HttpResponse<String> response = mock(HttpResponse.class);
     when(response.statusCode()).thenReturn(200);
-    when(response.body()).thenReturn(
-      "{\"choices\":[{\"message\":{\"content\":\"合成转写\"}}]}"
-    );
-    when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(response);
+    when(response.body()).thenReturn("{\"choices\":[{\"message\":{\"content\":\"合成转写\"}}]}");
+    var entered = new CountDownLatch(3);
+    var release = new CountDownLatch(1);
+    when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenAnswer(call -> {
+      entered.countDown();
+      assertTrue(release.await(8, TimeUnit.SECONDS));
+      return response;
+    });
     org.springframework.test.util.ReflectionTestUtils.setField(service, "client", client);
-    var audio = file("answer.wav", wav(16000, 1));
-    for (int i = 0; i < 101; i++) {
-      assertEquals("合成转写", service.transcribe(user, audio).get("text"));
-    }
-    verify(client, times(101)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
-    var row = s.one("SELECT * FROM input_limits WHERE user_id=? AND kind='SPEECH'", user);
-    assertEquals(Integer.MAX_VALUE, ((Number) row.get("attempts")).intValue());
-    assertEquals(0L, ((Number) row.get("lease_until")).longValue());
-    assertNull(row.get("lease_token"));
-  }
-
-  @Test
-  void unlimitedSpeechReleasesFailedLeaseWithoutCountingAttempts() {
-    String user = user();
-    assertThrows(IllegalStateException.class, () ->
-      inputs.limited(user, "SPEECH", 0, () -> { throw new IllegalStateException(); })
-    );
-    assertEquals("ok", inputs.limited(user, "SPEECH", 0, () -> "ok"));
-    var row = s.one("SELECT * FROM input_limits WHERE user_id=? AND kind='SPEECH'", user);
-    assertEquals(0, ((Number) row.get("attempts")).intValue());
-    assertEquals(0L, ((Number) row.get("lease_until")).longValue());
-    assertNull(row.get("lease_token"));
-  }
-
-  @Test
-  void unlimitedSpeechStillRespectsGlobalConcurrency() {
-    String user = user();
-    assertTrue(inputs.slots.tryAcquire(2));
+    var pool = Executors.newFixedThreadPool(3);
     try {
-      assertEquals(429, assertThrows(ResponseStatusException.class, () ->
-        inputs.limited(user, "SPEECH", 0, () -> "unreachable")
-      ).getStatusCode().value());
+      var requests = new ArrayList<Future<Map<String, Object>>>();
+      for (int i = 0; i < 3; i++) requests.add(pool.submit(() -> service.transcribe(file("answer.wav", wav(16000, 1)))));
+      assertTrue(entered.await(5, TimeUnit.SECONDS));
+      release.countDown();
+      for (var request : requests) assertEquals("合成转写", request.get(5, TimeUnit.SECONDS).get("text"));
     } finally {
-      inputs.slots.release(2);
+      release.countDown();
+      pool.shutdownNow();
     }
-    assertEquals("ok", inputs.limited(user, "SPEECH", 0, () -> "ok"));
+    assertEquals(Integer.MAX_VALUE, s.one("SELECT attempts FROM input_limits WHERE user_id=? AND kind='SPEECH'", user).get("attempts"));
   }
 
   @Test
@@ -1160,8 +1138,7 @@ class InputRegressionTest {
       assertEquals(409, assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, firstId, staleCount)).getStatusCode().value());
     assertEquals(404, assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user(), project, firstId, 1)).getStatusCode().value());
 
-    var speech = spy(new InterviewSpeech(s, inputs.model, inputs, service));
-    speech.dailyLimit = 2;
+    var speech = spy(new InterviewSpeech(s, inputs.model, service));
     doReturn(true).when(speech).ttsReady();
     doNothing().when(speech).synthesize(anyString(), any());
     var response = new org.springframework.mock.web.MockHttpServletResponse();
@@ -1181,8 +1158,8 @@ class InputRegressionTest {
     assertEquals(finalExplanation, service.speechPrompt(user, project, nextId, 1));
     var finalResponse = new org.springframework.mock.web.MockHttpServletResponse();
     speech.speak(user, project, nextId, 1, finalResponse);
-    verify(speech).synthesize(finalExplanation, finalResponse);
-    assertEquals(429, assertThrows(ResponseStatusException.class, () -> speech.speak(user, project, nextId, 1, response)).getStatusCode().value());
+    speech.speak(user, project, nextId, 1, finalResponse);
+    verify(speech, times(2)).synthesize(finalExplanation, finalResponse);
     state = service.run(user, project, Map.of("turnId", nextId, "dialogue", true, "exchangeCount", 1, "answer", "明白了"));
     assertEquals("COMPLETED", state.get("status"));
     assertThrows(ResponseStatusException.class, () -> service.speechPrompt(user, project, nextId, 2));
@@ -1212,23 +1189,23 @@ class InputRegressionTest {
   }
 
   @Test
-  void ttsAccepts650ServerCharactersButRejectsOversizedTextWithoutChargingQuota() {
+  void ttsKeepsTextValidationAndIgnoresPreviousDailyQuota() {
     String user = user(), project = id(), turn = id();
     var service = mock(ProjectPractice.class);
-    var speech = spy(new InterviewSpeech(s, inputs.model, inputs, service));
-    speech.dailyLimit = 1;
+    var speech = spy(new InterviewSpeech(s, inputs.model, service));
     doReturn(true).when(speech).ttsReady();
     doNothing().when(speech).synthesize(anyString(), any());
     var response = new org.springframework.mock.web.MockHttpServletResponse();
     String text = "讲".repeat(650);
     when(service.speechPrompt(user, project, turn, 0)).thenReturn(text);
-    speech.speak(user, project, turn, 0, response);
-    verify(speech).synthesize(text, response);
+    s.db.update("INSERT INTO input_limits(user_id,kind,window_start,attempts,lease_until) VALUES (?,'TTS',?,60,?)",
+      user, now(), now() + 90_000);
+    for (int i = 0; i < 61; i++) speech.speak(user, project, turn, 0, response);
+    verify(speech, times(61)).synthesize(text, response);
     for (String invalid : List.of("讲".repeat(651), " ")) {
       when(service.speechPrompt(user, project, turn, 0)).thenReturn(invalid);
       assertEquals(409, assertThrows(ResponseStatusException.class, () -> speech.speak(user, project, turn, 0, response)).getStatusCode().value());
     }
-    assertEquals(1, s.db.queryForObject("SELECT attempts FROM input_limits WHERE user_id=? AND kind='TTS'", Integer.class, user));
-    verify(speech, times(1)).synthesize(anyString(), any());
+    verify(speech, times(61)).synthesize(anyString(), any());
   }
 }

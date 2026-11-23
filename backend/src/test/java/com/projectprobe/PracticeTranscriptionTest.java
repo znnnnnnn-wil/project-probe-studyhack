@@ -1,7 +1,6 @@
 package com.projectprobe;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -10,8 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
@@ -33,10 +30,10 @@ class PracticeTranscriptionTest {
     return request;
   }
 
-  @ParameterizedTest
-  @ValueSource(strings = { "已有识别正在执行，请稍后再试", "识别已超时，请重新发起" })
-  void transcriptionLeaseFailureUsesRetryableStatus(String message) throws Exception {
-    when(inputs.transcribe(eq("user"), any())).thenThrow(Store.error(409, message));
+  @Test
+  void providerFailureUsesRetryableStatus() throws Exception {
+    String message = "语音识别服务暂不可用，请稍后再试";
+    when(inputs.transcribe(any())).thenThrow(Store.error(503, message));
 
     mvc.perform(transcribe())
       .andExpect(status().isServiceUnavailable())
@@ -55,7 +52,7 @@ class PracticeTranscriptionTest {
 
   @Test
   void questionChangedDuringTranscriptionStillReturnsConflict() throws Exception {
-    when(inputs.transcribe(eq("user"), any())).thenReturn(Map.of("text", "合成回答"));
+    when(inputs.transcribe(any())).thenReturn(Map.of("text", "合成回答"));
     when(practice.requireUnansweredTurn("user", "project", "turn", 0))
       .thenReturn(Map.of("id", "turn"))
       .thenThrow(Store.error(409, "本题已结束，请重新加载当前问题"));
