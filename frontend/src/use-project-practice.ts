@@ -214,7 +214,7 @@ export function useProjectPractice(projectId: string, roundId?: string, example 
       if (mounted.current) setCancelling(false);
     }
   };
-  const submit = async (utterance?: string, restart = false, topic = "") => {
+  const submit = async (utterance?: string, restart = false, topic = "", onSentence?: (sentence: string, speechTicket?: string) => void) => {
     if (roundId || working.current || cancelRequest.current || loadError || ["LOADING", "GENERATING"].includes(value.status)) return;
     if (restart && !value.roundId) return;
     const turn = value.turns?.at(-1);
@@ -232,7 +232,8 @@ export function useProjectPractice(projectId: string, roundId?: string, example 
     // Keep transcribed text retriable if the reply request fails before it reaches the server.
     if (utterance && "answer" in message && !current.current.trim()) edit(text);
     try {
-      const next = await api<Practice>(endpoint, "POST", message);
+      const next = await api<Practice>(endpoint, "POST", message, undefined,
+        onSentence && ((sentence, ticket) => { if (isCurrent()) onSentence(sentence, ticket); }));
       if (isCurrent()) accept(next);
     } catch (e) {
       if (!isCurrent()) return;

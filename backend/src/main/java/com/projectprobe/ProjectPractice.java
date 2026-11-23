@@ -196,6 +196,11 @@ class ProjectPractice {
   }
 
   Map<String, Object> run(String user, String projectId, Map<String, Object> input, boolean example) {
+    return run(user, projectId, input, example, null);
+  }
+
+  Map<String, Object> run(String user, String projectId, Map<String, Object> input, boolean example,
+      java.util.function.Consumer<String> sentences) {
     String token = id();
     boolean restart = Boolean.TRUE.equals(input.get("restart"));
     String answer = str(input, "answer").strip();
@@ -293,7 +298,7 @@ class ProjectPractice {
               !PracticeDialogue.matchesCount(pending.get("exchangeCount"), PracticeDialogue.count(turn)))
             throw error(409, "对话进度已更新，请重新读取后再回复");
           String utterance = str(pending, "answer");
-          var reply = PracticeDialogue.decide(model, body, turn, utterance);
+          var reply = PracticeDialogue.decide(model, body, turn, utterance, sentences);
           var exchanges = list(turn, "exchanges");
           var exchange = new LinkedHashMap<String, Object>(Map.of("answer", utterance, "reply", reply.text()));
           if (!reply.referenceAnswer().isBlank()) exchange.put(ExampleReference.FIELD, reply.referenceAnswer());

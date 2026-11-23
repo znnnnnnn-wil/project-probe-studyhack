@@ -146,6 +146,49 @@ public class ModelService {
     }
   }
 
+  String explainStreaming(String rule, Object data, java.util.function.Consumer<String> sentences) {
+    var stream = new PracticeExplanationStream(s, sentences);
+    long started = now();
+    boolean issued = false, success = false;
+    try (var permit = ModelAdmission.enter(modelSlots, waiting, maxQueued, queueWaitMillis, questionDeadline.get())) {
+      long remaining = Math.min(timeoutSeconds * 1000L, questionDeadline.get() - now());
+      if (remaining < 1000) throw error(503, "讲解生成预算已用尽，请重试");
+      var body = requestBody(rule, data);
+      body.remove("response_format");
+      @SuppressWarnings("unchecked") var messages = (List<Map<String, String>>) body.get("messages");
+      body.put("messages", List.of(Map.of("role", "system", "content", messages.get(0).get("content")
+        .replace("只返回 JSON 对象。", "直接输出中文讲解正文，使用完整句子。")), messages.get(1)));
+      body.put("max_tokens", 600);
+      body.put("stream", true);
+      body.put("stream_options", Map.of("include_usage", true));
+      var request = HttpRequest.newBuilder(URI.create(url.replaceAll("/$", "") + "/chat/completions"))
+        .timeout(Duration.ofMillis(remaining)).header("Authorization", "Bearer " + key)
+        .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(s.encode(body))).build();
+      issued = true;
+      var future = client.sendAsync(request, info -> HttpResponse.BodySubscribers.fromLineSubscriber(stream));
+      try {
+        var response = future.get(remaining, java.util.concurrent.TimeUnit.MILLISECONDS);
+        if (response.statusCode() != 200) throw error(503, "流式讲解暂不可用");
+        String result = stream.result();
+        success = true;
+        if (usage != null) usage.record(model, stream.inputTokens(), stream.outputTokens(), now() - started);
+        return result;
+      } finally {
+        future.cancel(true);
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw error(503, "讲解已中断，可稍后恢复");
+    } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException |
+        org.springframework.web.server.ResponseStatusException e) {
+      if (stream.started() || questionDeadline.get() - now() < 5000) throw error(503, "讲解未完整生成，可稍后恢复");
+    } finally {
+      stream.stop();
+      if (issued && usage != null) usage.attempt(model, now() - started, success);
+    }
+    return modelText(call("只返回 JSON 对象 {\"reply\":\"本题讲解\"}。" + rule, data), "reply", 300);
+  }
+
   Map<String, Object> capacity() {
     return Map.of("maxConcurrent", concurrency, "inFlight", Math.max(0, concurrency - modelSlots.availablePermits()),
       "maxQueued", maxQueued, "waiting", waiting.get(), "queueWaitMillis", queueWaitMillis);

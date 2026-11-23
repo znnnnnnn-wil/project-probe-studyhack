@@ -14,12 +14,13 @@ export async function api<T>(
   method = "GET",
   data?: unknown,
   signal?: AbortSignal,
+  onSentence?: (sentence: string, speechTicket?: string) => void,
 ): Promise<T> {
   const response = await fetch("/api" + path, {
     method,
     credentials: "same-origin",
     signal,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(onSentence ? { Accept: "application/x-ndjson" } : {}) },
     ...(data === undefined ? {} : { body: JSON.stringify(data) }),
   });
   if (!response.ok) {
@@ -35,6 +36,30 @@ export async function api<T>(
           "请求失败，请稍后重试"),
       body.requestId || response.headers.get("X-Request-ID") || undefined,
     );
+  }
+  if (onSentence && response.body && response.headers.get("Content-Type")?.includes("application/x-ndjson")) {
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let pending = "";
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const lines = (pending + chunk.value).split("\n");
+        pending = lines.pop() ?? "";
+        if (pending.length > 2_000_000) break;
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as { sentence?: string; speechTicket?: string; result?: T; status?: number; message?: string };
+          if (event.sentence) onSentence(event.sentence, event.speechTicket);
+          if (event.status) throw new ApiError(event.status, event.message || "训练请求失败");
+          if (event.result !== undefined) return event.result;
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    throw new ApiError(503, "讲解连接已中断，可以恢复训练");
   }
   return response.status === 204 ||
     response.headers.get("content-length") === "0"
