@@ -51,12 +51,6 @@ final class QuestionCoverage {
       if (Set.of("事务边界", "查询实现", "幂等与重试").contains(focus) && candidate.equals("参数校验实现"))
         throw error(503, "复测偏离所选目标，请围绕focus及首题变化条件继续询问");
     }
-    if (budgets(body).getOrDefault(goal(output), 0L) < 2) return;
-    String condition = str(output, "changedCondition"), question = str(output, "question");
-    if (condition.length() < 4 || condition.length() > 150 || !question.contains(condition) ||
-        !(question.contains("假设") || question.contains("如果")) || list(body, "turns").stream()
-          .anyMatch(t -> str(t, "question").contains(condition)))
-      throw error(503, "本轮已问过该目标，请选择未覆盖目标，或明确改变假设条件并返回changedCondition");
   }
 
   static List<Map<String, Object>> summarize(Map<String, Object> body) {
