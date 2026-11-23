@@ -9,7 +9,6 @@ import java.time.Duration;
 import java.util.*;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -386,11 +385,6 @@ public class ModelService {
   }
 
   static final String GENERIC_PRACTICE_OPENER = "请选择一个你参与过的功能，说明你在其中负责的部分。";
-  private static final class RepeatedHistoryQuestion extends ResponseStatusException {
-    RepeatedHistoryQuestion() {
-      super(HttpStatus.SERVICE_UNAVAILABLE, "该考点已独立答清，请改问未覆盖的具体目标");
-    }
-  }
   private static final List<GeneratedQuestion> PRACTICE_FALLBACK_QUESTIONS = List.of(
     new GeneratedQuestion(GENERIC_PRACTICE_OPENER, "个人贡献范围"),
     new GeneratedQuestion("请选择一个具体的使用场景，说明它从开始到结束的处理过程。", "场景处理流程"),
@@ -436,7 +430,7 @@ public class ModelService {
           output = attempt == 0 && !initialCandidate.isEmpty() ? initialCandidate : call(rule + referenceRule, input);
         } catch (ResponseStatusException unavailable) {
           if (exampleOpening && unavailable.getStatusCode().is5xxServerError() && !Thread.currentThread().isInterrupted()) {
-            var fallback = recoverExampleOpener(body, practiceHistory, "generation_unavailable");
+            var fallback = recoverExampleOpener(body, "generation_unavailable");
             if (fallback.isPresent()) return fallback.get();
           }
           throw unavailable;
@@ -446,13 +440,13 @@ public class ModelService {
         try {
           var question = validateQuestion(out, body, practiceHistory);
           if (exampleOpening && isGenericPracticeOpener(question.question())) {
-            var specific = recoverExampleOpener(body, practiceHistory, "generic_opener");
+            var specific = recoverExampleOpener(body, "generic_opener");
             if (specific.isPresent()) return specific.get();
           }
           if (retest && (!question.topic().equals(str(body, "focus")) ||
               !question.question().contains(modelText(out, "changedCondition", 300))))
             throw error(503, "复测主题或变化条件不符合要求");
-          if (qualityReviewEnabled || !practiceHistory.isEmpty()) {
+          if (!example && (qualityReviewEnabled || !practiceHistory.isEmpty())) {
             var reviewContext = questionInput(body);
             reviewContext.remove("practiceScoringFocus");
             boolean revision = "REVISE_QUESTION".equals(body.get("operation"));
@@ -478,12 +472,10 @@ public class ModelService {
             Map.of("question", str(out, "question"), "topic", str(out, "topic")));
           if (attempt > 0 || questionDeadline.get() - now() < 5000) {
             if (exampleOpening && e.getStatusCode().is5xxServerError() && !Thread.currentThread().isInterrupted()) {
-              String reason = e instanceof RepeatedHistoryQuestion ? "history_duplicate" :
-                e instanceof ModelQuality.Rejected ? "semantic_review" : "validation_or_review_unavailable";
-              var fallback = recoverExampleOpener(body, practiceHistory, reason);
+              var fallback = recoverExampleOpener(body, "validation_failed");
               if (fallback.isPresent()) return fallback.get();
             }
-            if (!exampleOpening && e instanceof ModelQuality.Rejected rejected && !retest && practiceReview.isEmpty()) {
+            if (!example && e instanceof ModelQuality.Rejected rejected && !retest && practiceReview.isEmpty()) {
               var fallback = fallbackPracticeQuestion(body, practiceHistory);
               if (fallback.isPresent()) {
                 log.warn("practice_question_fallback questionNumber={} exampleScenario={} reviewIssueCodes={}",
@@ -511,7 +503,7 @@ public class ModelService {
   private GeneratedQuestion validateQuestion(Map<String, Object> out, Map<String, Object> body, List<Map<String, Object>> practiceHistory) {
     var question = validateQuestion(out, body);
     if (PracticeRoundHistory.alreadyAnswered(practiceHistory, out))
-      throw new RepeatedHistoryQuestion();
+      throw error(503, "该考点已独立答清，请改问未覆盖的具体目标");
     QuestionCoverage.validatePremise(question.question(), body);
     QuestionCoverage.validateGoal(out, body);
     return question;
@@ -520,11 +512,8 @@ public class ModelService {
   private Optional<GeneratedQuestion> fallbackPracticeQuestion(Map<String, Object> body, List<Map<String, Object>> practiceHistory) {
     if (!PracticeScoring.appliesTo(body) || !(body.get("maxTurns") instanceof Number) ||
         "REVISE_QUESTION".equals(body.get("operation"))) return Optional.empty();
-    long start = fallbackOffset(body);
-    var specific = selectFallback(ExampleQuestions.fallbackFor(body), body, practiceHistory, start, "");
-    if (specific.isPresent()) return specific;
     String prefix = str(body, "interviewTopic").isBlank() ? "" : "围绕本轮面试主题，";
-    return selectFallback(PRACTICE_FALLBACK_QUESTIONS, body, practiceHistory, start, prefix);
+    return selectFallback(PRACTICE_FALLBACK_QUESTIONS, body, practiceHistory, list(body, "turns").size(), prefix);
   }
 
   static boolean isGenericPracticeOpener(String question) {
@@ -534,25 +523,15 @@ public class ModelService {
   }
 
   Optional<GeneratedQuestion> examplePracticeOpener(Map<String, Object> body) {
-    return selectFallback(ExampleQuestions.fallbackFor(body), body, list(body, "practiceHistory"), fallbackOffset(body), "");
+    return selectFallback(ExampleQuestions.fallbackFor(body), body, List.of(), fallbackOffset(body), "");
   }
 
-  private Optional<GeneratedQuestion> recoverExampleOpener(Map<String, Object> body,
-      List<Map<String, Object>> practiceHistory, String reason) {
-    var seeds = ExampleQuestions.fallbackFor(body);
-    long start = fallbackOffset(body);
-    var next = selectFallback(seeds, body, practiceHistory, start, "");
-    if (next.isPresent()) {
-      log.warn("practice_question_fallback questionNumber=1 exampleScenario={} reason={} reusedHistory=false",
+  private Optional<GeneratedQuestion> recoverExampleOpener(Map<String, Object> body, String reason) {
+    var next = examplePracticeOpener(body);
+    if (next.isPresent())
+      log.warn("practice_question_fallback questionNumber=1 exampleScenario={} reason={}",
         str(body, "exampleScenario"), reason);
-      return next;
-    }
-    // The example bank is finite. Rotate its concrete questions if every eligible opener was already answered.
-    var rotated = selectFallback(seeds, body, List.of(), start, "");
-    if (rotated.isPresent())
-      log.warn("practice_question_fallback questionNumber=1 exampleScenario={} reason={} reusedHistory=true",
-        str(body, "exampleScenario"), reason);
-    return rotated;
+    return next;
   }
 
   private static long fallbackOffset(Map<String, Object> body) {
@@ -657,6 +636,7 @@ public class ModelService {
       if (body.containsKey(field)) input.put(field, ModelContext.turns(list(new LinkedHashMap<>(body), field).stream()
         .filter(turn -> str(turn, "id").isBlank() || seen.add(str(turn, "id")))
         .toList()));
+    if (ExampleReference.enabled(body)) return input;
     var practiceHistory = list(new LinkedHashMap<>(body), "practiceHistory");
     if (!practiceHistory.isEmpty()) {
       input.put("practiceHistory", practiceHistory);
@@ -765,6 +745,7 @@ public class ModelService {
   }
 
   private GeneratedQuestion adaptDemoQuestion(Map<String, Object> body, GeneratedQuestion suggested) {
+    if (ExampleReference.enabled(body)) return suggested;
     var history = list(new LinkedHashMap<>(body), "practiceHistory");
     if (history.isEmpty()) return suggested;
     var review = PracticeRoundHistory.nextReview(body, history);

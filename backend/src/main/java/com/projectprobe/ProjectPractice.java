@@ -228,8 +228,10 @@ class ProjectPractice {
         roundId = id();
         current = new LinkedHashMap<>(Map.of("project", project, "kind", "PRACTICE", "turns", new ArrayList<>(), "modelMode", model.mode, "maxTurns", maxTurns));
         if (!interviewTopic.isBlank()) current.put("interviewTopic", interviewTopic);
-        var history = PracticeRoundHistory.load(s, user, projectId, model.mode);
-        if (!history.isEmpty()) current.put("practiceHistory", history);
+        if (!example) {
+          var history = PracticeRoundHistory.load(s, user, projectId, model.mode);
+          if (!history.isEmpty()) current.put("practiceHistory", history);
+        }
         s.db.update(
           "INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
           user, projectId, roundId, roundNumber, now(), "PENDING", s.encode(current)
@@ -271,6 +273,7 @@ class ProjectPractice {
         current.put("example", true);
         current.put("exampleScenario", ExampleQuestions.scenario(user, projectId));
         current.put("exampleRoundNumber", roundNumber);
+        current.remove("practiceHistory");
       }
       current.remove("status");
       current.remove("leaseUntil");
