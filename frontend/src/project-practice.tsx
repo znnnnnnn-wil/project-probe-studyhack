@@ -15,7 +15,6 @@ import { practiceHistoryPath, practiceProjectPath } from "./practice-paths";
 
 import { exampleReferenceAnswer } from "./example-reference";
 
-const voiceConsent = "面试官播报时可以直接开口打断。说话停顿后，录音会自动发往阿里云百炼转写。可随时暂停麦克风。";
 
 export function ProjectInterview({ id, fromHistory, example = false, ...props }: Actions & {
   id: string; fromHistory: boolean; example?: boolean;
@@ -50,7 +49,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const [autoProcessing, setAutoProcessing] = useState(false);
   const [sound, setSound] = useState(true);
   const { data: mediaConfig, loading: checkingVoice, reload: checkVoice } =
-    useApiResource<{ ttsEnabled?: boolean; speechEnabled?: boolean }>("/config");
+    useApiResource<{ ttsEnabled?: boolean; speechEnabled?: boolean; realtimeSpeechEnabled?: boolean }>("/config");
   const { speaking, preparing, speak, stop, unlock, supported: speechSupported, mouthLevel } = useQuestionSpeech(!!mediaConfig?.ttsEnabled);
   const camera = useCameraPreview();
   const { presence, snapshot: face } = useFacePresence(camera.on ? camera.stream : null);
@@ -61,6 +60,9 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const showingReportProgress = finishing && reportGenerating;
   const reportNeedsRetry = live && finalTurn && submitted && value.status === "FAILED";
   const canUseVoiceRoom = !!mediaConfig?.speechEnabled;
+  const voiceConsent = mediaConfig?.realtimeSpeechEnabled
+    ? "面试官播报时可以直接开口打断。检测到你发言后，语音会发送到阿里云百炼实时转写。可随时暂停麦克风。"
+    : "面试官播报时可以直接开口打断。说话停顿后，录音会自动发往阿里云百炼转写。可随时暂停麦克风。";
   const handsFree = voiceAccepted && canUseVoiceRoom;
   const startBlocked = busy || waiting || cancelling || loadError || value.retest?.status === "GENERATING";
   const openReport = useCallback(() => {
@@ -335,6 +337,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
               turnId={live ? turn?.id ?? "" : ""}
               exchangeCount={exchanges.length}
               enabled
+              realtime={!!mediaConfig?.realtimeSpeechEnabled}
               suspended={!live || busy || waiting || cancelling || loadError || submitted || value.status !== "ACTIVE" || hasDraft}
               promptPlaying={needsPlayback || preparing || speaking}
               cancelling={cancelling}

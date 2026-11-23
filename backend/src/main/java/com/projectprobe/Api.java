@@ -65,6 +65,8 @@ public class Api {
       model.mode.equals("live") ? model.model : "",
       "speechEnabled",
       inputs.speechReady(),
+      "realtimeSpeechEnabled",
+      inputs.realtimeSpeechReady(),
       "ttsEnabled",
       speech.ttsReady(),
       "resumeImportEnabled",

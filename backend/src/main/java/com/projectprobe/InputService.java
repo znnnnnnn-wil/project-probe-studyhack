@@ -33,6 +33,13 @@ public class InputService {
   @Value("${app.speech-free-quota-confirmed-model:}")
   String confirmedModel;
 
+  @Value("${app.speech-realtime-enabled:true}") boolean realtimeEnabled;
+  @Value("${app.speech-realtime-confirmed-model:}") String realtimeConfirmedModel;
+
+  boolean realtimeSpeechReady() {
+    return realtimeEnabled && speechReady() && (paidAllowed || "qwen3-asr-flash-realtime".equals(realtimeConfirmedModel));
+  }
+
   @Value("${app.speech-model:qwen3-asr-flash}")
   String speechModel;
 

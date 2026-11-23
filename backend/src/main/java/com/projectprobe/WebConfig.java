@@ -58,14 +58,17 @@ public class WebConfig extends OncePerRequestFilter {
       res.sendError(403, "来源校验失败");
       return;
     }
+    boolean realtimeConnection = req.getMethod().equals("GET") &&
+      path.matches("/api/(?:examples/)?projects/[a-f0-9-]{36}/practice/transcribe-stream");
     if (
-      mutation &&
+      realtimeConnection || (mutation &&
       (Set.of("/api/auth/login", "/api/auth/register", "/api/auth/recover", "/api/account/recovery", "/api/account/password").contains(path)
-        || path.matches("/api/examples/projects/[^/]+/open"))
+        || path.matches("/api/examples/projects/[^/]+/open")))
     ) {
       String client;
       try {
         client = clientAddress.resolve(req);
+        if (realtimeConnection) client = "speech:" + client;
       } catch (IllegalArgumentException e) {
         res.sendError(403, "代理来源配置不正确");
         return;

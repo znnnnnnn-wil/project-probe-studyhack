@@ -11,11 +11,11 @@ import org.springframework.web.servlet.HandlerMapping;
 @RequestMapping({"/api", "/api/{scope:examples}"})
 class PracticeApi {
   final Auth auth; final ProjectPractice practice; final PracticeRetest retest; final InterviewSpeech speech;
-  final InputService inputs; final ExampleSessions examples;
+  final InputService inputs; final ExampleSessions examples; final InterviewTranscription realtime;
   PracticeApi(Auth auth, ProjectPractice practice, PracticeRetest retest, InterviewSpeech speech, InputService inputs,
-    ExampleSessions examples) {
+    ExampleSessions examples, InterviewTranscription realtime) {
     this.auth = auth; this.practice = practice; this.retest = retest; this.speech = speech;
-    this.inputs = inputs; this.examples = examples;
+    this.inputs = inputs; this.examples = examples; this.realtime = realtime;
   }
 
   private boolean exampleRequest(HttpServletRequest request) {
@@ -59,6 +59,12 @@ class PracticeApi {
     var result = inputs.transcribe(file);
     practice.requireUnansweredTurn(user, id, turnId, exchangeCount);
     return result;
+  }
+  @GetMapping("/projects/{id}/practice/transcribe-stream")
+  void transcribeStream(HttpServletRequest request, HttpServletResponse response, @PathVariable String id,
+      @RequestParam String turnId, @RequestParam int exchangeCount) throws java.io.IOException, jakarta.websocket.DeploymentException {
+    String user = user(request);
+    realtime.open(request, response, () -> practice.requireUnansweredTurn(user, id, turnId, exchangeCount));
   }
   @PostMapping("/projects/{id}/practice/retest") Object retest(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
     return retest.run(user(r), id, input);

@@ -7,6 +7,6 @@ export default defineConfig({
   server: {
     port: 5273,
     strictPort: true,
-    proxy: { "/api": process.env.PROBE_API_TARGET || "http://127.0.0.1:8180" },
+    proxy: { "/api": { target: process.env.PROBE_API_TARGET || "http://127.0.0.1:8180", ws: true } },
   },
 });
