@@ -48,9 +48,11 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const [autoListening, setAutoListening] = useState(false);
   const [autoProcessing, setAutoProcessing] = useState(false);
   const [sound, setSound] = useState(true);
+  const soundEnabled = useRef(sound);
+  soundEnabled.current = sound;
   const { data: mediaConfig, loading: checkingVoice, reload: checkVoice } =
     useApiResource<{ ttsEnabled?: boolean; speechEnabled?: boolean; realtimeSpeechEnabled?: boolean }>("/config");
-  const { speaking, preparing, speak, stop, unlock, supported: speechSupported, mouthLevel } = useQuestionSpeech(!!mediaConfig?.ttsEnabled);
+  const { speaking, preparing, speak, stop, unlock, supported: speechSupported, mouthLevel, beginSpeechStream, playbackNotice } = useQuestionSpeech(!!mediaConfig?.ttsEnabled);
   const camera = useCameraPreview();
   const { presence, snapshot: face } = useFacePresence(camera.on ? camera.stream : null);
   const turn = value.turns?.at(-1);
@@ -85,14 +87,24 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const startInterview = () => {
     if (startBlocked || !canUseVoiceRoom) return;
     enableVoice();
-    void run(() => submit(undefined, !!value.report, topic));
+    void run(async () => { await submit(undefined, !!value.report, topic); });
   };
   const sendVoice = (text: string) => {
     if (text.length > 3000) {
       edit(text);
       return;
     }
-    return run(() => submit(text));
+    const playback = beginSpeechStream(endpoint);
+    return run(async () => {
+      const result = await submit(text, false, "", (sentence, ticket) => {
+        if (soundEnabled.current) playback.write(sentence, ticket);
+      });
+      if (!result) { playback.cancel(); return; }
+      const updated = result.turns?.at(-1);
+      if (playback.end() && updated && updated.id === turn?.id) {
+        spokenPrompt.current = updated.id + ":" + (updated.exchanges?.length ?? 0);
+      }
+    });
   };
   useLayoutEffect(() => {
     const dialog = roomDialog.current;
@@ -123,7 +135,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
     if (!referenceAnswer || referenceSendBlocked) return;
     spokenPrompt.current = promptKey;
     stop();
-    void run(() => submit(referenceAnswer));
+    void run(async () => { await submit(referenceAnswer); });
   };
   const handleAutoListening = useCallback((active: boolean) => {
     setAutoListening(active);
@@ -159,7 +171,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   const avatarStatus = openingFailed ? "首题待重试" : showingReportProgress ? "面试已结束" : finishing ? "正在处理最后一题" :
     speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
   const action = <Button disabled={busy || cancelling || autoProcessing || (!loadError && (waiting || (!canUseVoiceRoom && !reportNeedsRetry) || (hasDraft && answer.length > 3000)))} onClick={() => {
-    if (loadError) void load(); else void run(() => submit());
+    if (loadError) void load(); else void run(async () => { await submit(); });
   }}>
     {loadError ? "重新读取训练状态" : waiting ? "正在生成，自动恢复进度…" : hasDraft ? "重试发送" :
       reportNeedsRetry ? "重试生成报告" : "重试或恢复训练"}<ArrowRight size={16} />
@@ -333,6 +345,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
             </Button>
           </div>
         </section>}
+        {handsFree && sound && playbackNotice && <p className="exp-voice-notice" role="status">{playbackNotice}</p>}
         {handsFree && !showingReportProgress && <PracticeConversationVoice
               endpoint={endpoint}
               turnId={live ? turn?.id ?? "" : ""}

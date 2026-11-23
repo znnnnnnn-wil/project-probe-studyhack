@@ -61,6 +61,68 @@ for (const connection of ["ready", "delayed", "closed"] as const) test(
   expect(batchUploads).toBe(connection === "closed" ? 1 : 0);
 });
 
+test("流式讲解在完整回复到达前请求云端播报，失败后按顺序朗读剩余句子", async ({ page }) => {
+  const id = "35888888-8888-4888-8888-888888888888";
+  const path = "/api/projects/" + id + "/practice";
+  const question = { id: "teach", topic: "并发", question: "如何阻止重复写入？", answer: "" };
+  const answer = "我不会，请给我讲解";
+  const first = "先在数据库里约束重复写入。";
+  const second = "然后用并发测试验证。";
+  const active = { status: "ACTIVE", roundId: "speech-round", maxTurns: 5, turns: [question] };
+  const result = { ...active, turns: [{ ...question, explanation: first + second, exchanges: [{ answer, reply: first + second }] }] };
+  const voice = await mockHandsFree(page);
+  await page.addInitScript(({ path, first, second, result }) => {
+    const nativeFetch = window.fetch.bind(window);
+    Object.defineProperty(MediaSource, "isTypeSupported", { value: () => true });
+    window.fetch = (input, init) => {
+      if (input !== path || init?.method !== "POST") return nativeFetch(input, init);
+      const encoder = new TextEncoder();
+      const reply = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const write = (event: unknown) => controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+          write({ sentence: first, speechTicket: "first-sentence-ticket" });
+          window.addEventListener("continue-test-explanation", () => {
+            write({ sentence: second, speechTicket: "second-sentence-ticket" });
+            write({ result });
+            controller.close();
+          }, { once: true });
+        },
+      });
+      return Promise.resolve(new Response(reply, { headers: { "Content-Type": "application/x-ndjson" } }));
+    };
+  }, { path, first, second, result });
+  const sentenceCalls: unknown[] = [];
+  await page.route("**/api/**", route => {
+    const endpoint = new URL(route.request().url()).pathname;
+    if (endpoint === path + "/tts") {
+      const request = route.request().postDataJSON();
+      if (request.sentence) sentenceCalls.push(request);
+      return route.fulfill({ status: 503 });
+    }
+    const responses: Record<string, unknown> = {
+      "/api/config": { modelMode: "live", speechEnabled: true, ttsEnabled: true },
+      "/api/me": { id: "synthetic", username: "语音验证" },
+      ["/api/projects/" + id]: { id, name: "合成并发项目" },
+      [path]: active,
+      [path + "/transcribe"]: { text: answer },
+    };
+    return route.fulfill({ json: responses[endpoint] ?? [] });
+  });
+  await page.goto("/#/projects/" + id + "?interview=1");
+  await page.getByRole("button", { name: "同意并进入语音面试" }).click();
+  await expect.poll(voice.micState).toEqual(["live", true]);
+  await voice.beginSpeech();
+  await voice.endSpeech();
+  await expect.poll(() => sentenceCalls).toEqual([{ sentence: first, speechTicket: "first-sentence-ticket" }]);
+  await expect.poll(async () => (await voice.playback()).playing).toBe(first);
+  await expect(page.getByText("云端播报暂不可用，已切换到浏览器朗读。", { exact: true })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event("continue-test-explanation")));
+  await expect(page.getByText(first + second, { exact: false }).first()).toBeVisible();
+  await page.evaluate(() => (window as TestVoiceWindow).testPlayback?.onend?.(new Event("end") as SpeechSynthesisEvent));
+  await expect.poll(async () => (await voice.playback()).playing).toBe(second);
+  expect(sentenceCalls).toHaveLength(1);
+});
+
 test("面试完成后进入本场报告，项目材料单独编辑，复练后仍可回看", async ({ page }) => {
   const firstAnswer = "我负责接口与数据库约束：同一座位时段只写入一条预约，冲突回滚，并发尚未验证。";
   const voice = await mockPracticeVoice(page, () => firstAnswer);

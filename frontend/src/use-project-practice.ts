@@ -234,7 +234,7 @@ export function useProjectPractice(projectId: string, roundId?: string, example 
     try {
       const next = await api<Practice>(endpoint, "POST", message, undefined,
         onSentence && ((sentence, ticket) => { if (isCurrent()) onSentence(sentence, ticket); }));
-      if (isCurrent()) accept(next);
+      if (isCurrent()) { accept(next); return next; }
     } catch (e) {
       if (!isCurrent()) return;
       if (e instanceof ApiError && e.status === 409) {
