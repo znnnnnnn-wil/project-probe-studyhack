@@ -165,6 +165,32 @@ class ProjectPractice {
     return PracticeDialogue.currentPrompt(requireUnansweredTurn(user, projectId, turnId, exchangeCount));
   }
 
+  void refreshLegacyExampleOpener(String user, String projectId, String scenario) {
+    s.locked(user, () -> {
+      var rows = s.db.queryForList("SELECT round_id,round_number,status,body,lease_until FROM project_practice_rounds " +
+        "WHERE user_id=? AND project_id=? AND status<>'CLEARED' ORDER BY round_number DESC LIMIT 1", user, projectId);
+      if (rows.isEmpty()) return null;
+      var row = rows.get(0);
+      if (!"ACTIVE".equals(row.get("status")) || ((Number) row.get("lease_until")).longValue() > now()) return null;
+      var body = s.decode(row.get("body"));
+      var turns = list(body, "turns");
+      if (!ExampleReference.enabled(body) || !"live".equals(body.get("modelMode")) || turns.size() != 1 ||
+          !PracticeRetest.object(body.get("pendingExchange")).isEmpty()) return null;
+      var first = turns.get(0);
+      if (!str(first, "answer").isBlank() || !str(first, "explanation").isBlank() || PracticeDialogue.count(first) > 0 ||
+          !ModelService.isGenericPracticeOpener(str(first, "question"))) return null;
+      body.put("exampleScenario", scenario);
+      body.put("exampleRoundNumber", row.get("round_number"));
+      body.put("turns", new ArrayList<>());
+      model.examplePracticeOpener(body).ifPresent(question -> {
+        list(body, "turns").add(newTurn(question));
+        s.db.update("UPDATE project_practice_rounds SET body=? WHERE user_id=? AND project_id=? AND round_id=?",
+          s.encode(body), user, projectId, row.get("round_id"));
+      });
+      return null;
+    });
+  }
+
   Map<String, Object> run(String user, String projectId, Map<String, Object> input) {
     return run(user, projectId, input, false);
   }
@@ -176,6 +202,7 @@ class ProjectPractice {
     var claim = s.locked(user, () -> {
       var current = get(user, projectId); String status = str(current, "status");
       String roundId = str(current, "roundId");
+      long roundNumber = ((Number) current.getOrDefault("roundNumber", 0L)).longValue();
       if (restart) {
         if (!status.equals("COMPLETED") || !roundId.equals(required(input, "roundId", 36)))
           throw error(409, "练习状态已变化，请刷新后再开始");
@@ -192,7 +219,7 @@ class ProjectPractice {
         var project = new LinkedHashMap<>(projects.get(user, projectId));
         project.put("facts", list(project, "facts").stream().filter(f -> Boolean.TRUE.equals(f.get("confirmed"))).toList());
         if (maxTurns < 1 || maxTurns > 5) throw error(503, "练习轮数配置不正确");
-        long roundNumber = ((Number) current.getOrDefault("roundNumber", 0L)).longValue() + 1;
+        roundNumber++;
         roundId = id();
         current = new LinkedHashMap<>(Map.of("project", project, "kind", "PRACTICE", "turns", new ArrayList<>(), "modelMode", model.mode, "maxTurns", maxTurns));
         if (!interviewTopic.isBlank()) current.put("interviewTopic", interviewTopic);
@@ -235,7 +262,11 @@ class ProjectPractice {
           } else if (!dialogue) turn.put("answer", answer);
         }
       }
-      if (example) current.put("example", true);
+      if (example) {
+        current.put("example", true);
+        current.put("exampleScenario", ExampleQuestions.scenario(user, projectId));
+        current.put("exampleRoundNumber", roundNumber);
+      }
       current.remove("status");
       current.remove("leaseUntil");
       current.remove("roundId");

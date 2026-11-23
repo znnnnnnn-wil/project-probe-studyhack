@@ -304,7 +304,9 @@ class ProjectPracticeTest {
           if ("相同负载的写入保护".equals(candidate.get("topic"))) {
             rejected.incrementAndGet();
             assertTrue(rule.contains("以前独立答清"));
-            return Map.of("issues", List.of(Map.of("code", "REPEATED_GOAL", "reason", "仍在考相同任务的去重。")));
+            return Map.of("issues", List.of(Map.of("code", "REPEATED_GOAL", "reason", "仍在考相同任务的去重。",
+              "previousQuestionId", answered, "previousGoalQuote", "如何避免相同任务重复写入",
+              "candidateGoalQuote", "怎样防止插入两笔数据")));
           }
           return Map.of("issues", List.of());
         }
@@ -358,5 +360,80 @@ class ProjectPracticeTest {
     assertEquals(original.get("turns"), service.get(user, projectId, firstRound).get("turns"));
     String otherProject = str(projects.save(user, null, Map.of("name", "其它项目")), "id");
     assertFalse(practice.run(user, otherProject, Map.of()).containsKey("practiceHistory"));
+  }
+
+  @Test void practiceAdvancesWithOpenQuestionsWhenBothModelCandidatesAreRejected() {
+    String user = id();
+    s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
+    String project = str(projects.save(user, null, Map.of("name", "合成预约项目")), "id");
+    var reviewCount = new java.util.concurrent.atomic.AtomicInteger();
+    var model = new ModelService(s, "live", "https://never-called.invalid", "synthetic", "synthetic", "test") {
+      @Override Map<String, Object> call(String rule, Object input) {
+        if (rule.startsWith(ModelQuality.QUESTION_RULE)) {
+          reviewCount.incrementAndGet();
+          return Map.of("issues", List.of(Map.of("code", "UNSUPPORTED_PREMISE", "reason", "材料尚未证明这个实现已完成")));
+        }
+        return Map.of("question", "请说明你已完成的索引设计。", "topic", "索引设计");
+      }
+    };
+    model.qualityReviewEnabled = true;
+    var livePractice = new ProjectPractice(s, projects, model);
+    livePractice.maxTurns = 5;
+    livePractice.journey = practice.journey;
+
+    var started = livePractice.run(user, project, Map.of("topic", "并发预约"));
+    assertEquals("ACTIVE", started.get("status"));
+    var first = list(started, "turns").get(0);
+    assertTrue(str(first, "question").startsWith("围绕本轮面试主题，"));
+    assertEquals("个人贡献范围", first.get("topic"));
+    String answer = "我负责预约接口。";
+    var resumed = livePractice.run(user, project, Map.of("turnId", first.get("id"), "answer", answer));
+    var turns = list(resumed, "turns");
+    assertEquals("ACTIVE", resumed.get("status"));
+    assertEquals(started.get("roundId"), resumed.get("roundId"));
+    assertEquals(2, turns.size());
+    assertEquals(answer, turns.get(0).get("answer"));
+    assertEquals("场景处理流程", turns.get(1).get("topic"));
+    assertEquals(4, reviewCount.get());
+  }
+
+  @Test void exampleFallbackQuestionsFollowEachScenarioAndChangeAcrossNewRounds() {
+    String user = id();
+    s.db.update("INSERT INTO app_users VALUES (?,?,?,?)", user, user, "unused", now());
+    var rejections = List.of(Map.of("code", "UNSUPPORTED_PREMISE", "reason", "材料尚未确认这个实现"));
+    var model = new ModelService(s, "live", "https://never-called.invalid", "synthetic", "synthetic", "test") {
+      @Override Map<String, Object> call(String rule, Object data) {
+        if (rule.startsWith(ModelQuality.QUESTION_RULE)) return Map.of("issues", rejections);
+        if (((Map<?, ?>) data).get("repair") instanceof Map<?, ?> repair) {
+          assertEquals(rejections, repair.get("reviewIssues"));
+        }
+        return Map.of("question", "请说明你负责的功能。", "topic", "项目职责");
+      }
+    };
+    model.qualityReviewEnabled = true;
+    var livePractice = new ProjectPractice(s, projects, model);
+    livePractice.maxTurns = 5;
+    livePractice.journey = practice.journey;
+
+    var keywords = Map.of("rag", List.of("文档切分", "向量检索"),
+      "booking", List.of("后端接口", "座位预约"), "scheduler", List.of("任务领取", "到期通知"));
+    for (var entry : keywords.entrySet()) {
+      String project = ExampleQuestions.projectId(user, entry.getKey());
+      projects.openExample(user, project, Map.of("name", "合成示例 " + entry.getKey()));
+      var first = livePractice.run(user, project, Map.of(), true);
+      assertEquals("ACTIVE", first.get("status"));
+      var firstTurn = list(first, "turns").get(0);
+      assertTrue(str(firstTurn, "question").contains(entry.getValue().get(0)));
+      assertFalse(ExampleReference.read(firstTurn.get(ExampleReference.FIELD)).isBlank());
+      assertEquals(first, livePractice.run(user, project, Map.of(), true));
+
+      livePractice.cancel(user, project, str(first, "roundId"));
+      var next = livePractice.run(user, project, Map.of(), true);
+      assertEquals(2L, next.get("roundNumber"));
+      var nextTurn = list(next, "turns").get(0);
+      assertTrue(str(nextTurn, "question").contains(entry.getValue().get(1)));
+      assertNotEquals(firstTurn.get("question"), nextTurn.get("question"));
+      assertFalse(ExampleReference.read(nextTurn.get(ExampleReference.FIELD)).isBlank());
+    }
   }
 }

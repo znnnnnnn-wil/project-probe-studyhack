@@ -178,4 +178,17 @@ class ModelQualityTest {
     assertEquals(candidate.get("question"), model.question(practice).question());
     assertEquals(List.of("generate", "review"), calls);
   }
+
+  @Test void genericOpeningFromTheModelIsReplacedByAnExampleSpecificQuestion() {
+    var practice = body();
+    practice.putAll(Map.of("kind", "PRACTICE", "maxTurns", 5, "example", true, "exampleScenario", "rag",
+      "exampleRoundNumber", 1, "turns", new ArrayList<>()));
+    var rules = new ArrayList<String>();
+    var candidate = Map.<String, Object>of("question", ModelService.GENERIC_PRACTICE_OPENER, "topic", "个人贡献范围");
+    var model = queued(List.of(candidate), rules);
+    var chosen = model.firstDeepQuestion(practice);
+    assertTrue(chosen.question().contains("文档切分"));
+    assertTrue(chosen.referenceAnswer().contains("段落编号"));
+    assertEquals(1, rules.size());
+  }
 }

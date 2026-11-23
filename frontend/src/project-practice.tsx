@@ -154,8 +154,9 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
   }, [questionId, exchanges.length, pendingExchange]);
   const listening = autoListening || face.speaking;
   const thinking = !showingReportProgress && !loadError && (pending || value.status === "GENERATING");
+  const openingFailed = !turn && !waiting && value.status === "FAILED";
   const avatarState = speaking ? "speaking" : thinking ? "thinking" : listening ? "listening" : "idle";
-  const avatarStatus = showingReportProgress ? "面试已结束" : finishing ? "正在处理最后一题" :
+  const avatarStatus = openingFailed ? "首题待重试" : showingReportProgress ? "面试已结束" : finishing ? "正在处理最后一题" :
     speaking ? "面试官正在提问" : thinking ? "面试官正在思考" : preparing ? "准备播报" : listening ? "正在听你的回答" : face.face ? "面试官正在看着你" : "等待你的回答";
   const action = <Button disabled={busy || cancelling || autoProcessing || (!loadError && (waiting || (!canUseVoiceRoom && !reportNeedsRetry) || (hasDraft && answer.length > 3000)))} onClick={() => {
     if (loadError) void load(); else void run(() => submit());
@@ -284,7 +285,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
                 <button type="button" className="button" aria-describedby="practice-voice-consent"
                   disabled={startBlocked} onClick={startInterview}>
                   <Mic size={16} aria-hidden="true" />
-                  {waiting ? "正在准备…" : value.status === "FAILED" && !value.report
+                  {waiting ? "正在准备…" : openingFailed ? "重试生成首题" : value.status === "FAILED" && !value.report
                     ? "重试或恢复训练" : "同意并开始语音面试"}
                 </button>
                 <small id="practice-voice-consent">{voiceConsent}</small>
@@ -340,6 +341,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
               realtime={!!mediaConfig?.realtimeSpeechEnabled}
               suspended={!live || busy || waiting || cancelling || loadError || submitted || value.status !== "ACTIVE" || hasDraft}
               promptPlaying={needsPlayback || preparing || speaking}
+              openingFailed={openingFailed}
               cancelling={cancelling}
               cancelDisabled={!value.roundId || !!value.report}
               onCancel={() => void cancelInterview()}

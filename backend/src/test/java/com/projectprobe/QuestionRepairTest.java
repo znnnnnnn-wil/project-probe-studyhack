@@ -42,4 +42,20 @@ class QuestionRepairTest {
       () -> model.checkedQuestion("只问一题", new LinkedHashMap<>(), new LinkedHashMap<>(), false));
     assertEquals(2, calls.get());
   }
+
+  @Test void anUnavailableModelCanStartKnownExamplesEvenWhenTheQuestionBankHasBeenPracticed() {
+    var model = new ModelService(null, "live", "https://example.invalid", "synthetic-key", "test-model", "test") {
+      @Override Map<String, Object> call(String rule, Object input) { throw Store.error(503, "合成模型暂不可用"); }
+    };
+    var practice = new LinkedHashMap<String, Object>(Map.of("example", true, "exampleScenario", "booking",
+      "exampleRoundNumber", 3, "kind", "PRACTICE", "maxTurns", 5, "project", Map.of()));
+    var seeds = ExampleQuestions.fallbackFor(practice);
+    var history = seeds.stream().map(seed -> Map.<String, Object>of("question", seed.question(), "topic", seed.topic(),
+      "outcome", PracticeRoundHistory.ANSWERED_INDEPENDENTLY)).toList();
+    practice.put("practiceHistory", history);
+    assertEquals(seeds.get(2), model.firstDeepQuestion(practice));
+
+    practice.put("interviewTopic", "未提供材料的专题");
+    assertThrows(org.springframework.web.server.ResponseStatusException.class, () -> model.firstDeepQuestion(practice));
+  }
 }

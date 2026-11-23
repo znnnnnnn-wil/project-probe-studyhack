@@ -9,7 +9,9 @@ import java.time.Duration;
 import java.util.*;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class ModelService {
@@ -340,6 +342,20 @@ public class ModelService {
     GeneratedQuestion(String question, String topic, String reviewOf) { this(question, topic, reviewOf, ""); }
   }
 
+  static final String GENERIC_PRACTICE_OPENER = "请选择一个你参与过的功能，说明你在其中负责的部分。";
+  private static final class RepeatedHistoryQuestion extends ResponseStatusException {
+    RepeatedHistoryQuestion() {
+      super(HttpStatus.SERVICE_UNAVAILABLE, "该考点已独立答清，请改问未覆盖的具体目标");
+    }
+  }
+  private static final List<GeneratedQuestion> PRACTICE_FALLBACK_QUESTIONS = List.of(
+    new GeneratedQuestion(GENERIC_PRACTICE_OPENER, "个人贡献范围"),
+    new GeneratedQuestion("请选择一个具体的使用场景，说明它从开始到结束的处理过程。", "场景处理流程"),
+    new GeneratedQuestion("请选一个需要做设计取舍的环节，说明你会依据哪项约束来选择方案。", "设计取舍依据"),
+    new GeneratedQuestion("请选一个你想检验的功能结果，说明你会观察什么来判断它是否符合预期。", "功能验证方法"),
+    new GeneratedQuestion("请选一个需要考虑的异常情况，说明你期望系统怎样响应。", "异常响应边界")
+  );
+
   GeneratedQuestion checkedQuestion(String rule, Map<String, Object> input, Map<String, Object> body, boolean retest) {
     rule += " 使用‘请说明’等单句请求表达，以句号结束，不使用问号。每题只问一个可独立回答的具体目标，建议40–90字；不要一次穷举职责、生成方式、冲突判定、返回结果和验证方法。根据回答再选下一目标，不在题干里提供答案。只保留一个请求，例如围绕验证缺口只问如何核对某一输出，不把设置数据、预期结果、观察方式并列要求在一题中。";
     boolean planScoring = input.containsKey("practiceScoringFocus");
@@ -359,16 +375,32 @@ public class ModelService {
     long previous = questionDeadline.get();
     questionDeadline.set(Math.min(previous, now() + 80000));
     boolean example = ExampleReference.enabled(body);
+    boolean exampleOpening = !retest && example && !str(body, "exampleScenario").isBlank() &&
+      PracticeScoring.appliesTo(body) && body.get("maxTurns") instanceof Number &&
+      !"REVISE_QUESTION".equals(body.get("operation")) && list(body, "turns").isEmpty() && practiceReview.isEmpty();
     String referenceRule = example
       ? " 示例项目的题干要点明材料中的一个具体模块、处理环节或已明确的技术约束。涉及尚未验证的内容时，询问如何验证。附加一个单独的 referenceAnswer 字段，直接回答本次生成的 question。" + ExampleReference.INSTRUCTIONS
       : "";
     try {
       for (int attempt = 0; attempt < 2; attempt++) {
-        var output = call(rule + referenceRule, input);
+        Map<String, Object> output;
+        try {
+          output = call(rule + referenceRule, input);
+        } catch (ResponseStatusException unavailable) {
+          if (exampleOpening && unavailable.getStatusCode().is5xxServerError() && !Thread.currentThread().isInterrupted()) {
+            var fallback = recoverExampleOpener(body, practiceHistory, "generation_unavailable");
+            if (fallback.isPresent()) return fallback.get();
+          }
+          throw unavailable;
+        }
         var out = example ? new LinkedHashMap<>(output) : output;
         String referenceAnswer = example ? ExampleReference.read(out.remove(ExampleReference.FIELD)) : "";
         try {
           var question = validateQuestion(out, body, practiceHistory);
+          if (exampleOpening && isGenericPracticeOpener(question.question())) {
+            var specific = recoverExampleOpener(body, practiceHistory, "generic_opener");
+            if (specific.isPresent()) return specific.get();
+          }
           if (retest && (!question.topic().equals(str(body, "focus")) ||
               !question.question().contains(modelText(out, "changedCondition", 300))))
             throw error(503, "复测主题或变化条件不符合要求");
@@ -397,6 +429,20 @@ public class ModelService {
           if (e instanceof ModelQuality.Rejected rejected) rejected.diagnostic.put("candidate",
             Map.of("question", str(out, "question"), "topic", str(out, "topic")));
           if (attempt > 0 || questionDeadline.get() - now() < 5000) {
+            if (exampleOpening && e.getStatusCode().is5xxServerError() && !Thread.currentThread().isInterrupted()) {
+              String reason = e instanceof RepeatedHistoryQuestion ? "history_duplicate" :
+                e instanceof ModelQuality.Rejected ? "semantic_review" : "validation_or_review_unavailable";
+              var fallback = recoverExampleOpener(body, practiceHistory, reason);
+              if (fallback.isPresent()) return fallback.get();
+            }
+            if (!exampleOpening && e instanceof ModelQuality.Rejected rejected && !retest && practiceReview.isEmpty()) {
+              var fallback = fallbackPracticeQuestion(body, practiceHistory);
+              if (fallback.isPresent()) {
+                log.warn("practice_question_fallback questionNumber={} exampleScenario={} reviewIssueCodes={}",
+                  list(body, "turns").size() + 1, str(body, "exampleScenario"), rejected.issueCodes());
+                return fallback.get();
+              }
+            }
             throw e;
           }
           input = new LinkedHashMap<>(input);
@@ -417,10 +463,71 @@ public class ModelService {
   private GeneratedQuestion validateQuestion(Map<String, Object> out, Map<String, Object> body, List<Map<String, Object>> practiceHistory) {
     var question = validateQuestion(out, body);
     if (PracticeRoundHistory.alreadyAnswered(practiceHistory, out))
-      throw error(503, "该考点已独立答清，请改问未覆盖的具体目标");
+      throw new RepeatedHistoryQuestion();
     QuestionCoverage.validatePremise(question.question(), body);
     QuestionCoverage.validateGoal(out, body);
     return question;
+  }
+
+  private Optional<GeneratedQuestion> fallbackPracticeQuestion(Map<String, Object> body, List<Map<String, Object>> practiceHistory) {
+    if (!PracticeScoring.appliesTo(body) || !(body.get("maxTurns") instanceof Number) ||
+        "REVISE_QUESTION".equals(body.get("operation"))) return Optional.empty();
+    long start = fallbackOffset(body);
+    var specific = selectFallback(ExampleQuestions.fallbackFor(body), body, practiceHistory, start, "");
+    if (specific.isPresent()) return specific;
+    String prefix = str(body, "interviewTopic").isBlank() ? "" : "围绕本轮面试主题，";
+    return selectFallback(PRACTICE_FALLBACK_QUESTIONS, body, practiceHistory, start, prefix);
+  }
+
+  static boolean isGenericPracticeOpener(String question) {
+    String normalized = normalizeQuestion(question);
+    return normalized.equals(normalizeQuestion(GENERIC_PRACTICE_OPENER)) ||
+      normalized.equals(normalizeQuestion("围绕本轮面试主题，" + GENERIC_PRACTICE_OPENER));
+  }
+
+  Optional<GeneratedQuestion> examplePracticeOpener(Map<String, Object> body) {
+    return selectFallback(ExampleQuestions.fallbackFor(body), body, list(body, "practiceHistory"), fallbackOffset(body), "");
+  }
+
+  private Optional<GeneratedQuestion> recoverExampleOpener(Map<String, Object> body,
+      List<Map<String, Object>> practiceHistory, String reason) {
+    var seeds = ExampleQuestions.fallbackFor(body);
+    long start = fallbackOffset(body);
+    var next = selectFallback(seeds, body, practiceHistory, start, "");
+    if (next.isPresent()) {
+      log.warn("practice_question_fallback questionNumber=1 exampleScenario={} reason={} reusedHistory=false",
+        str(body, "exampleScenario"), reason);
+      return next;
+    }
+    // The example bank is finite. Rotate its concrete questions if every eligible opener was already answered.
+    var rotated = selectFallback(seeds, body, List.of(), start, "");
+    if (rotated.isPresent())
+      log.warn("practice_question_fallback questionNumber=1 exampleScenario={} reason={} reusedHistory=true",
+        str(body, "exampleScenario"), reason);
+    return rotated;
+  }
+
+  private static long fallbackOffset(Map<String, Object> body) {
+    long roundNumber = body.get("exampleRoundNumber") instanceof Number value ? value.longValue() : 1;
+    return list(body, "turns").size() + Math.max(0, roundNumber - 1);
+  }
+
+  private Optional<GeneratedQuestion> selectFallback(List<GeneratedQuestion> candidates, Map<String, Object> body,
+      List<Map<String, Object>> practiceHistory, long start, String prefix) {
+    var turns = list(body, "turns");
+    int count = candidates.size();
+    for (int offset = 0; offset < count; offset++) {
+      var seed = candidates.get(Math.floorMod(start + offset, count));
+      var candidate = Map.<String, Object>of("question", prefix + seed.question(), "topic", seed.topic());
+      if (turns.stream().anyMatch(turn -> PracticeRoundHistory.sameTopic(turn, candidate))) continue;
+      try {
+        var validated = validateQuestion(candidate, body, practiceHistory);
+        return Optional.of(new GeneratedQuestion(validated.question(), validated.topic(), "", seed.referenceAnswer()));
+      } catch (org.springframework.web.server.ResponseStatusException rejected) {
+        // Try the next open question when history or the current turn rules exclude this one.
+      }
+    }
+    return Optional.empty();
   }
 
   Map<String, Object> retestTarget(Map<String, Object> previous) {

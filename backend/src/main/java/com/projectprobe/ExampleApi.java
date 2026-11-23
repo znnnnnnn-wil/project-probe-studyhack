@@ -7,7 +7,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.web.bind.annotation.*;
@@ -21,14 +20,16 @@ class ExampleApi {
   private final List<Example> catalog;
   private final ExampleSessions sessions;
   private final ProjectService projects;
+  private final ProjectPractice practice;
   private final FeedbackService feedback;
 
-  ExampleApi(Store store, ExampleSessions sessions, ProjectService projects, FeedbackService feedback) throws IOException {
+  ExampleApi(Store store, ExampleSessions sessions, ProjectService projects, ProjectPractice practice, FeedbackService feedback) throws IOException {
     try (var input = new ClassPathResource("example-projects.json").getInputStream()) {
       catalog = store.json.readValue(input, new TypeReference<>() {});
     }
     this.sessions = sessions;
     this.projects = projects;
+    this.practice = practice;
     this.feedback = feedback;
   }
 
@@ -37,8 +38,10 @@ class ExampleApi {
     var example = catalog.stream().filter(entry -> entry.id().equals(sample)).findFirst()
       .orElseThrow(() -> error(404, "示例项目不存在"));
     return sessions.open(request, response, user -> {
-      String id = UUID.nameUUIDFromBytes((user + ":" + sample).getBytes(StandardCharsets.UTF_8)).toString();
-      return projects.openExample(user, id, example.project());
+      String id = ExampleQuestions.projectId(user, sample);
+      var project = projects.openExample(user, id, example.project());
+      practice.refreshLegacyExampleOpener(user, id, sample);
+      return project;
     });
   }
 
