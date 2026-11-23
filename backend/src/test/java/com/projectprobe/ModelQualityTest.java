@@ -209,4 +209,18 @@ class ModelQualityTest {
     assertTrue(rules.get(0).contains("nextQuestion"));
     assertTrue(rules.get(1).startsWith(ModelQuality.QUESTION_RULE));
   }
+
+  @Test void firstExplanationSentenceIsEmittedBeforeTheModelFinishes() {
+    var sentences = new ArrayList<String>();
+    var stream = new PracticeExplanationStream(store, sentences::add);
+    stream.onNext("data: {\"choices\":[{\"delta\":{\"content\":\"用唯一约束\"}}]}");
+    assertTrue(sentences.isEmpty());
+    stream.onNext("data: {\"choices\":[{\"delta\":{\"content\":\"避免重复。再检查\"}}]}");
+    assertEquals(List.of("用唯一约束避免重复。"), sentences);
+    assertThrows(ResponseStatusException.class, stream::result);
+    stream.onNext("data: {\"choices\":[{\"delta\":{\"content\":\"响应。\"}}]}");
+    stream.onNext("data: [DONE]");
+    assertEquals("用唯一约束避免重复。再检查响应。", stream.result());
+    assertEquals(List.of("用唯一约束避免重复。", "再检查响应。"), sentences);
+  }
 }

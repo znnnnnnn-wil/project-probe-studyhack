@@ -93,6 +93,11 @@ final class PracticeDialogue {
   }
 
   static Reply decide(ModelService model, Map<String, Object> practice, Map<String, Object> turn, String answer) {
+    return decide(model, practice, turn, answer, null);
+  }
+
+  static Reply decide(ModelService model, Map<String, Object> practice, Map<String, Object> turn, String answer,
+      java.util.function.Consumer<String> sentences) {
     boolean learning = !str(turn, "explanation").isBlank();
     if (learning && confirmsUnderstanding(answer)) return new Reply(true, "好的，这道题的讲解就到这里。", false);
     if (smallTalk(answer)) {
@@ -132,6 +137,7 @@ final class PracticeDialogue {
     ));
     if (learning) return parseLearning(model.call(LEARNING, input), answer);
     if (explain) {
+      if (sentences != null) return new Reply(false, model.explainStreaming(TEACHING, input, sentences), true);
       var output = model.call("用户已明确表示不会或请求答案，只返回 {\"reply\":\"本题简要讲解\"}。" + TEACHING, input);
       return new Reply(false, modelText(output, "reply", 300), true);
     }

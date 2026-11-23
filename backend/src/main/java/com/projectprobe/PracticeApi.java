@@ -34,8 +34,36 @@ class PracticeApi {
   @GetMapping("/projects/{id}/practice") Object get(
     HttpServletRequest r, @PathVariable String id, @RequestParam(defaultValue = "") String roundId
   ) { return practice.get(user(r), id, roundId); }
-  @PostMapping("/projects/{id}/practice") Object run(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
-    return practice.run(user(r), id, input, exampleRequest(r));
+  @PostMapping("/projects/{id}/practice") Object run(HttpServletRequest r, HttpServletResponse response,
+      @PathVariable String id, @RequestBody Map<String, Object> input) throws java.io.IOException {
+    String user = user(r);
+    boolean example = exampleRequest(r);
+    if (!"application/x-ndjson".equals(r.getHeader("Accept"))) return practice.run(user, id, input, example);
+    response.setContentType("application/x-ndjson;charset=UTF-8");
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Accel-Buffering", "no");
+    java.util.function.Consumer<Map<String, Object>> send = event -> {
+      try {
+        var writer = response.getWriter();
+        writer.println(practice.s.encode(event));
+        writer.flush();
+      } catch (java.io.IOException ignored) {
+        // A disconnected client can still resume the saved exchange.
+      }
+    };
+    try {
+      var result = practice.run(user, id, input, example, sentence ->
+        send.accept(Map.of("sentence", sentence)));
+      send.accept(Map.of("result", result));
+    } catch (org.springframework.web.server.ResponseStatusException e) {
+      if (!response.isCommitted()) {
+        int status = e.getStatusCode().value();
+        response.setStatus(status);
+        if (status == 429 || status == 503) response.setHeader("Retry-After", "3");
+      }
+      send.accept(Map.of("status", e.getStatusCode().value(), "message", java.util.Objects.toString(e.getReason(), "训练请求失败")));
+    }
+    return null;
   }
   @PostMapping("/projects/{id}/practice/cancel") Object cancel(HttpServletRequest r, @PathVariable String id, @RequestBody Map<String, Object> input) {
     return practice.cancel(user(r), id, Store.required(input, "roundId", 36));
