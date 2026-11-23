@@ -8,7 +8,6 @@ export function PracticeReview({ projectId, endpoint, run, busy }: Actions & { p
   const [detail, setDetail] = useState("");
   const [saved, setSaved] = useState(!!sessionStorage.getItem("practice-review:" + projectId));
   return <section className="practice-review" aria-label="自愿练习反馈"><h3>这次练习对你有帮助吗？</h3>
-    <p>反馈自愿填写，仅保存在站内。</p>
     {saved ? <p role="status">已记录这次练习反馈，感谢你帮助改进产品。</p> : <>
       <div role="group" aria-label="帮助程度"><span>帮助程度（1分很少，5分很有帮助）</span><div className="review-choices">{[1, 2, 3, 4, 5].map(n =>
         <button key={n} type="button" aria-pressed={score === n} disabled={busy} onClick={() => setScore(n)}>{n}分</button>)}</div></div>
