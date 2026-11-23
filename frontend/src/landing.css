@@ -56,8 +56,9 @@
 }
 
 .probe-hero-actions .button {
-  min-height: 46px;
-  padding-inline: 15px;
+  min-height: 52px;
+  padding-inline: 17px;
+  font-size: 16px;
 }
 
 .probe-backend-note {
@@ -397,7 +398,7 @@
   .probe-hero-copy h1 { font-size: clamp(39px, 10.7vw, 55px); }
   .probe-hero-intro { margin-top: 16px; font-size: 15px; line-height: 1.75; }
   .probe-hero-actions { gap: 8px; margin-top: 17px; }
-  .probe-hero-actions .button { min-height: 42px; padding-inline: 11px; font-size: 13px; }
+  .probe-hero-actions .button { min-height: 46px; padding-inline: 13px; font-size: 14px; }
   .probe-preview-head { min-height: 52px; padding: 8px 11px; }
   .probe-preview-head h2 { font-size: 14px; }
   .probe-preview-body { grid-template-columns: minmax(0, 1fr); }
