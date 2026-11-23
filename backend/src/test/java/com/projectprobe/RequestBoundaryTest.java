@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -56,6 +58,54 @@ class RequestBoundaryTest {
           .content(" ".repeat(200001))
       )
       .andExpect(status().isPayloadTooLarge());
+  }
+
+  @Test
+  void reopeningAnExampleReplacesOnlyAnUntouchedLegacyOpeningQuestion() throws Exception {
+    String origin = "http://localhost:5173";
+    String open = "/api/examples/projects/rag/open";
+    for (String progress : List.of("untouched", "pending", "exchanged")) {
+      var example = mvc.perform(post(open).header("Origin", origin)).andExpect(status().isOk()).andReturn().getResponse();
+      var cookie = example.getCookie("probe_example");
+      String projectId = store.json.readTree(example.getContentAsByteArray()).path("id").asText();
+      String practice = "/api/examples/projects/" + projectId + "/practice";
+      var created = mvc.perform(post(practice).header("Origin", origin).cookie(cookie)
+        .contentType("application/json").content("{}"))
+        .andExpect(status().isOk()).andReturn().getResponse();
+      String roundId = store.json.readTree(created.getContentAsByteArray()).path("roundId").asText();
+      var stored = store.decode(store.one("SELECT body FROM project_practice_rounds WHERE round_id=?", roundId).get("body"));
+      stored.put("modelMode", "live");
+      stored.remove("exampleScenario");
+      stored.remove("exampleRoundNumber");
+      var turn = Store.list(stored, "turns").get(0);
+      String oldTurnId = Store.str(turn, "id");
+      turn.put("question", ModelService.GENERIC_PRACTICE_OPENER);
+      if (progress.equals("pending")) stored.put("pendingExchange", Map.of("turnId", oldTurnId, "answer", "我的回答", "exchangeCount", 0));
+      if (progress.equals("exchanged")) turn.put("exchanges", List.of(Map.of("answer", "我的回答", "reply", "请继续")));
+      store.db.update("UPDATE project_practice_rounds SET body=? WHERE round_id=?", store.encode(stored), roundId);
+
+      mvc.perform(post(open).header("Origin", origin).cookie(cookie)).andExpect(status().isOk());
+      var current = mvc.perform(get(practice).cookie(cookie)).andExpect(status().isOk())
+        .andExpect(jsonPath("$.roundId").value(roundId)).andExpect(jsonPath("$.turns.length()").value(1))
+        .andReturn().getResponse();
+      var first = store.json.readTree(current.getContentAsByteArray()).path("turns").get(0);
+      if (progress.equals("untouched")) {
+        String newTurnId = first.path("id").asText();
+        assertNotEquals(oldTurnId, newTurnId);
+        assertTrue(first.path("question").asText().contains("文档切分"));
+        assertTrue(first.path("referenceAnswer").asText().contains("段落编号"));
+        mvc.perform(post(open).header("Origin", origin).cookie(cookie)).andExpect(status().isOk());
+        mvc.perform(get(practice).cookie(cookie)).andExpect(jsonPath("$.turns[0].id").value(newTurnId));
+        mvc.perform(post(practice).header("Origin", origin).cookie(cookie).contentType("application/json")
+          .content(store.encode(Map.of("turnId", oldTurnId, "answer", "旧页面的回答"))))
+          .andExpect(status().isConflict());
+      } else {
+        assertEquals(oldTurnId, first.path("id").asText());
+        assertEquals(ModelService.GENERIC_PRACTICE_OPENER, first.path("question").asText());
+        var after = store.decode(store.one("SELECT body FROM project_practice_rounds WHERE round_id=?", roundId).get("body"));
+        assertEquals(stored, after);
+      }
+    }
   }
 
   @Test

@@ -681,4 +681,39 @@ class CompetitionPracticeTest {
       verify(model, times(1)).call(anyString(), any());
     }
   }
+
+  @Test void exampleResumesFailedOpeningWhenBothCandidatesRepeatAnsweredHistory() {
+    String user = fixture()[0];
+    String projectId = ExampleQuestions.projectId(user, "booking");
+    var project = projects.openExample(user, projectId, Map.of("name", "校园自习室预约系统",
+      "implementation", "预约表记录座位、时段和状态，同一座位同一时段只允许一条有效预约。"));
+    var example = Map.<String, Object>of("example", true, "exampleScenario", "booking");
+    var repeated = ExampleQuestions.fallbackFor(example).get(1);
+    var answered = Map.of("id", id(), "question", repeated.question(), "topic", repeated.topic(),
+      "answer", repeated.referenceAnswer(), "answeredIndependently", true,
+      "exchanges", List.of(Map.of("answer", repeated.referenceAnswer(), "reply", "下一题。")));
+    s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
+      user, projectId, id(), 1, now(), "COMPLETED", s.encode(Map.of("modelMode", "live", "turns", List.of(answered))));
+    String failedRoundId = id();
+    var history = PracticeRoundHistory.load(s, user, projectId, "live");
+    assertEquals(PracticeRoundHistory.ANSWERED_INDEPENDENTLY, history.get(0).get("outcome"));
+    s.db.update("INSERT INTO project_practice_rounds(user_id,project_id,round_id,round_number,started_at,status,body) VALUES (?,?,?,?,?,?,?)",
+      user, projectId, failedRoundId, 2, now(), "FAILED", s.encode(Map.of("modelMode", "live", "turns", List.of(),
+        "project", project, "kind", "PRACTICE", "maxTurns", 5, "practiceHistory", history)));
+
+    var model = dialogueModel();
+    doReturn(Map.of("question", repeated.question(), "topic", repeated.topic())).when(model).call(anyString(), any());
+    var service = new ProjectPractice(s, projects, model);
+    service.journey = practice.journey;
+    var state = service.run(user, projectId, Map.of(), true);
+
+    assertEquals("ACTIVE", state.get("status"));
+    assertEquals(failedRoundId, state.get("roundId"));
+    var next = ExampleQuestions.fallbackFor(example).get(2);
+    var opener = list(state, "turns").get(0);
+    assertEquals(next.question(), opener.get("question"));
+    assertEquals(next.referenceAnswer(), opener.get(ExampleReference.FIELD));
+    verify(model, times(2)).call(anyString(), any());
+    verify(model).call(anyString(), argThat(input -> PracticeRetest.object(input).containsKey("repair")));
+  }
 }

@@ -19,6 +19,7 @@ type PracticeConversationVoiceProps = VoiceTarget & {
   realtime?: boolean;
   suspended: boolean;
   promptPlaying: boolean;
+  openingFailed?: boolean;
   cancelling?: boolean;
   cancelDisabled?: boolean;
   onCancel: () => void;
@@ -367,7 +368,8 @@ export function PracticeConversationVoice(props: PracticeConversationVoiceProps)
   const readyLabel = phase === "waiting" && promptPlaying
     ? "面试官正在播报，可以直接开口打断"
     : phase === "turn-taking" && !turnId ? "正在准备首题" : PHASE_LABELS[phase];
-  const label = paused ? "麦克风已暂停" : failure ? "语音面试已暂停" : readyLabel;
+  const label = paused ? "麦克风已暂停" : failure ? "语音面试已暂停" :
+    props.openingFailed ? "首题生成失败，等待重试" : readyLabel;
   return (
     <div className="exp-voice practice-conversation-voice">
       <div className="exp-voice-bar">
