@@ -335,7 +335,7 @@ function ProjectPractice({ projectId, project, example, exitLabel, onExit, run, 
         {referenceAnswer && <section className="practice-reference" aria-label="参考回答">
           <div className="practice-reference-heading">
             <h3>参考回答</h3>
-            <small>{turn?.explanation ? "听懂后可以照读或发送" : "可照读或直接发送"}</small>
+            <small>仅示例项目提供 · {turn?.explanation ? "听懂后可以照读或发送" : "可照读或直接发送"}</small>
           </div>
           <p>{referenceAnswer}</p>
           <div className="practice-reference-action">
